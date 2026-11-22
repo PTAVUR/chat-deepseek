@@ -5,23 +5,23 @@
 
 ## 1. 项目是什么
 
-- 项目：`chat-deepseek`，本地目录 `chat-deepseek`，版本 `0.1.0`，MIT。
+- 项目：`chat-deepseek`，本地目录 `chat-deepseek`，版本 `0.1.0-official0.1.3`，MIT。
 - 来源：`https://github.com/deepseek-ai/chat-demo.git` 的克隆。远程 `upstream`（原 `origin`）指向上游，`origin` 指向自己的 GitLab 仓库 `git@gitlab.com:elegantgx/chat-deepseek.git`（SSH）。
 - 分支策略：`main` 只镜像上游、不在上面开发；日常改造在 `feature/*` 分支进行，定期把 `main` 同步到上游后合并进 feature 分支，再推送到 `origin`。
 - 定位：**纯前端静态聊天应用**，没有应用后端。浏览器直接调用 DeepSeek API，API Key 存在浏览器本地。
 - 能力：多会话、消息分支 / 编辑重答 / 重新生成 / 继续生成、流式回复、深度思考、联网搜索与链接阅读、附件上传、Markdown / 代码高亮 / KaTeX / Mermaid、中英双语、明暗主题、移动端、语音输入与朗读、历史导入导出。
 - 技术栈：React 18.3.1、TypeScript 7.0.2（strict）、rspack 2.0.2（SWC + lightningcss）、zustand 4.4.7、idb 8.0.3、fflate、mdast / micromark、katex、prismjs、mermaid。
 - 运行环境：Node.js 22.12+、pnpm。开发端口 `8090`。
-- 部署形态：静态站点（GitHub Pages）或直接打开 `dist/index.html`。**保留 `file://` 可用性是现有约束**（见 §7）。
+- 部署形态：静态站点（可部署到 GitLab Pages 等静态托管）或直接打开 `dist/index.html`。**保留 `file://` 可用性是现有约束**（见 §7）。
 
 ## 2. 当前状态（2026-11-23 核验）
 
 - Git：当前在 `feature/dev`；`main` 跟踪 `upstream/main`，`feature/dev` 跟踪 `origin/feature/dev`；`AGENTS.md` 提交在 feature 分支，工作区干净。
 - `pnpm type`：通过。
 - `pnpm lint`：通过，`0 warnings and 0 errors`（121 个文件，101 条规则）。
-- `pnpm build`：通过（rspack 约 1.4s），生成 `dist/`（已在 `.gitignore` 中忽略）。
+- `pnpm build`：通过（rspack 约 1.6s），生成 `dist/`（已在 `.gitignore` 中忽略）。
 - `pnpm dev`：本次未长时间启动；配置端口为 `8090`。
-- 测试：**没有测试框架、没有测试文件、没有 `test` 脚本**。CI（`.github/workflows/pages.yml`）只跑 `type` → `lint` → `build` → 部署 Pages。
+- 测试：**没有测试框架、没有测试文件、没有 `test` 脚本**。仓库里仍保留上游的 `.github/workflows/pages.yml`（GitHub Pages 用，会跑 `type` → `lint` → `build` → 部署）；当前 GitLab 仓库尚未配置 CI。
 - 代码规模：`src` 约 19.4k 行（其中 TS/TSX 约 14.7k 行）；最大文件是 `src/services/chat/store.ts`（约 1.1k 行）。
 - 源码中没有 `TODO` / `FIXME` 标记。
 
@@ -59,7 +59,7 @@ src/
   env.d.ts                    CSS Modules / __API_ORIGIN__ / prismjs / katex 的模块声明
 ```
 
-`README.md`、`README.zh-CN.md` 是面向用户的功能与数据说明；`src/services/chat/history/README.md` 是历史导入导出的详细设计文档。改功能时同步更新对应文档。
+`README.md` 是唯一面向用户的功能、运行与数据说明（中文）；英文版已删除，不要恢复双语结构。`src/services/chat/history/README.md` 是历史导入导出的详细设计文档。改功能时同步更新对应文档。
 
 ## 4. 数据模型与本地存储
 
@@ -230,6 +230,7 @@ CI 与本地门禁一致：`pnpm type` + `pnpm lint` + `pnpm build`。新增测�
 ## 10. 与用户协作改造
 
 - **当前改造目标：待用户说明。** 在目标明确前不要大改结构，也不要擅自引入依赖、测试框架或数据迁移。
+- `README.md` 只写用户和开发者需要的事实与用法，保持与上游 README 同等的信息密度；试错过程、环境限制、临时决定写到 §12，不要把 README 变成日志或垃圾桶。
 - 建议流程：确认目标与验收标准 → 读相关模块与数据流 → 给出影响面 / 方案 → 实现 → `type` / `lint` / `build` → 按 §8 手动冒烟 → 汇总改动、风险与未覆盖项。
 - 需要向用户确认的典型问题：
   - 改造是功能扩展、UI 改版还是底层重构？需要兼容上游 `deepseek-ai/chat-demo` 的后续合并吗？
@@ -258,8 +259,20 @@ CI 与本地门禁一致：`pnpm type` + `pnpm lint` + `pnpm build`。新增测�
 
 - 冲突只在 `feature/*` 分支解决，不要为了让合并通过而修改 `main`。
 - 标签：上游 tag 原样镜像到 `origin`（`v0.1.0`–`v0.1.3` 已推送）；同步上游 tag 用 `git fetch upstream --tags`，再 `git push origin --tags`。
-- 版本：`package.json` 的名称是 `chat-deepseek`，版本是 `0.1.0`；版本号第一位（major）跟随上游，当前上游也是 `0.x`。`package.json` 的版本不带 `v`。
-- 我们自己的发布 tag 带 `v` 前缀，格式为 `v<我们的版本>-official<上游版本>`，例如 `v1.0.0-official0.3.0`；当前若发布会得到 `v0.1.0-official0.1.3`，不与上游 `vX.Y.Z` 混用。
+- 版本：`package.json` 的名称是 `chat-deepseek`，版本是 `0.1.0-official0.1.3`；版本号第一位（major）跟随上游，当前上游也是 `0.x`。`package.json` 的 `version` 不带 `v`，但带 `official` 后缀。
+- 我们自己的发布 tag 带 `v` 前缀，格式为 `v<我们的版本>-official<上游版本>`，例如 `v1.0.0-official0.3.0`；当前版本对应 `v0.1.0-official0.1.3`，不与上游 `vX.Y.Z` 混用。`package.json` 的版本与 git tag 一一对应，tag 只多一个 `v`。
 - `AGENTS.md` 提交在 `feature/dev`，不要提交到 `main`。
 - 本机 SSH 注意：系统配置 `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` 权限异常，仓库已设置 `core.sshCommand = ssh -F /dev/null` 绕过；换到 SSH 正常的机器时可删除该配置。
 - 查看当前跟踪关系：`git remote -v`、`git branch -vv`。
+
+## 12. 环境与试错记录
+
+> README 只保留用户文档；排查过程、环境限制和临时决定记录在这里。
+
+- **GitLab SSH**：本机 `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` 权限异常，直接 `ssh` / `git push` 会报 `Bad owner or permissions`。仓库已设置 `core.sshCommand = ssh -F /dev/null` 绕过；换到 SSH 正常的机器时可以删除该配置。
+- **pnpm 12 预检**：本机全局 store 在 workspace 外（`~/.local/share/pnpm/store/v11`），DSH 沙箱下 `pnpm type` / `lint` / `build` 前的自动安装检查会报 `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` / 只读文件系统；脚本本身仍会继续执行并通过。依赖未变化时可忽略；真正需要安装依赖时可尝试把 store 指到可写目录（如 `--store-dir /tmp/pnpm-store`），当前环境尚未验证。
+- **上游连通性**：检查 GitHub upstream 时 `git ls-remote` 曾超时；本地 `upstream/main` 跟踪关系正常，同步失败先排查网络或代理。
+- **package version**：`0.1.0-official0.1.3` 是合法的 semver 预发布版本（prerelease），npm 已验证可解析，pnpm 构建也能读取；私有项目不发布 npm，所以可以采用。注意它排序在 `0.1.0` 之前，不要把它当作正式版 `0.1.0` 的替代。
+- **存储命名**：IndexedDB 数据库名和 localStorage 前缀仍是 `chat-demo`（代码未改）；直接改名会让已有本地数据不可见。后续如果要统一成 `chat-deepseek`，需要迁移或明确接受数据重置。
+- **README 语言**：只保留中文 `README.md`，英文版已删除；README 保持用户文档定位，试错与决策记录放这里。
+- **当前 UI 文案**：应用标题 / `appName` 仍是上游的“API 使用 demo”，`src/services/chat/history/README.md` 仍写 `chat-demo`；这些属于后续代码或文档统一事项。
