@@ -42,6 +42,7 @@ func TestCreateOpenSetServerIDDelete(t *testing.T) {
 	file, err := store.Create(
 		ctx,
 		userID,
+		"",
 		"../报告.txt",
 		"text/plain",
 		"user_data",
@@ -103,26 +104,26 @@ func TestCreateValidation(t *testing.T) {
 	store, userID, _ := newTestStore(t)
 	ctx := context.Background()
 
-	if _, err := store.Create(ctx, userID, "empty.txt", "text/plain", "", false, 0, strings.NewReader("")); !errors.Is(err, ErrInvalidFile) {
+	if _, err := store.Create(ctx, userID, "", "empty.txt", "text/plain", "", false, 0, strings.NewReader("")); !errors.Is(err, ErrInvalidFile) {
 		t.Fatalf("empty error = %v", err)
 	}
-	if _, err := store.Create(ctx, userID, "x.txt", "text/plain", "bad", false, 1, strings.NewReader("x")); !errors.Is(err, ErrInvalidFile) {
+	if _, err := store.Create(ctx, userID, "", "x.txt", "text/plain", "bad", false, 1, strings.NewReader("x")); !errors.Is(err, ErrInvalidFile) {
 		t.Fatalf("purpose error = %v", err)
 	}
-	if _, err := store.Create(ctx, userID, "big.bin", "application/octet-stream", "", false, MaxFileSize+1, strings.NewReader("x")); !errors.Is(err, ErrTooLarge) {
+	if _, err := store.Create(ctx, userID, "", "big.bin", "application/octet-stream", "", false, MaxFileSize+1, strings.NewReader("x")); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("size error = %v", err)
 	}
-	if _, err := store.Create(ctx, userID, "big.txt", "text/plain", "user_data", false, MaxUserDataSize+1, strings.NewReader("x")); !errors.Is(err, ErrTooLarge) {
+	if _, err := store.Create(ctx, userID, "", "big.txt", "text/plain", "user_data", false, MaxUserDataSize+1, strings.NewReader("x")); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("user data size error = %v", err)
 	}
-	if _, err := store.Create(ctx, "../alice", "x.txt", "text/plain", "", false, 1, strings.NewReader("x")); !errors.Is(err, ErrInvalidFile) {
+	if _, err := store.Create(ctx, "../alice", "", "x.txt", "text/plain", "", false, 1, strings.NewReader("x")); !errors.Is(err, ErrInvalidFile) {
 		t.Fatalf("user id error = %v", err)
 	}
 }
 
 func TestCreateImageMetadata(t *testing.T) {
 	store, userID, _ := newTestStore(t)
-	file, err := store.Create(context.Background(), userID, "photo.png", "image/png", "", true, 4, strings.NewReader("data"))
+	file, err := store.Create(context.Background(), userID, "", "photo.png", "image/png", "", true, 4, strings.NewReader("data"))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -135,5 +136,60 @@ func TestCreateImageMetadata(t *testing.T) {
 	}
 	if info.Size() != 4 {
 		t.Fatalf("size = %d", info.Size())
+	}
+}
+
+func TestExplicitIDIsIdempotentAndScoped(t *testing.T) {
+	store, userID, otherID := newTestStore(t)
+	ctx := context.Background()
+	first, err := store.Create(ctx, userID, "same-id", "a.txt", "text/plain", "user_data", false, 3, strings.NewReader("one"))
+	if err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if first.ID != "same-id" {
+		t.Fatalf("id = %q", first.ID)
+	}
+	if _, err := store.Create(ctx, userID, "same-id", "b.txt", "text/plain", "user_data", false, 3, strings.NewReader("two")); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	metadata, handle, err := store.Open(ctx, userID, "same-id")
+	if err != nil {
+		t.Fatalf("open replaced: %v", err)
+	}
+	data, _ := io.ReadAll(handle)
+	_ = handle.Close()
+	if metadata.Name != "b.txt" || string(data) != "two" {
+		t.Fatalf("replaced = %+v, data = %q", metadata, data)
+	}
+
+	if _, err := store.Create(ctx, otherID, "same-id", "c.txt", "text/plain", "user_data", false, 3, strings.NewReader("bad")); !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("other user error = %v", err)
+	}
+	metadata, handle, err = store.Open(ctx, userID, "same-id")
+	if err != nil {
+		t.Fatalf("open after conflict: %v", err)
+	}
+	data, _ = io.ReadAll(handle)
+	_ = handle.Close()
+	if metadata.Name != "b.txt" || string(data) != "two" {
+		t.Fatalf("cross-user overwrite = %+v, data = %q", metadata, data)
+	}
+}
+
+func TestDeleteAll(t *testing.T) {
+	store, userID, _ := newTestStore(t)
+	ctx := context.Background()
+	for _, id := range []string{"file-a", "file-b"} {
+		if _, err := store.Create(ctx, userID, id, id+".txt", "text/plain", "user_data", false, 1, strings.NewReader("x")); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	if err := store.DeleteAll(ctx, userID); err != nil {
+		t.Fatalf("delete all: %v", err)
+	}
+	for _, id := range []string{"file-a", "file-b"} {
+		if _, err := store.Get(ctx, userID, id); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("get %s error = %v", id, err)
+		}
 	}
 }

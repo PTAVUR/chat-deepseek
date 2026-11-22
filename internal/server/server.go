@@ -26,6 +26,7 @@ import (
 	"gitlab.com/elegantgx/chat-deepseek/internal/filestore"
 	"gitlab.com/elegantgx/chat-deepseek/internal/secret"
 	"gitlab.com/elegantgx/chat-deepseek/internal/settings"
+	"gitlab.com/elegantgx/chat-deepseek/internal/webui"
 )
 
 // Server 持有 API 依赖；Handler 返回可挂到 http.Server 的处理链。
@@ -76,7 +77,7 @@ func New(
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
-	mux.HandleFunc("GET /{$}", s.handleRoot)
+	mux.HandleFunc("GET /", s.handleUI)
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	mux.Handle("GET /api/v1/auth/me", s.withAuth(http.HandlerFunc(s.handleMe)))
 	mux.Handle("POST /api/v1/auth/logout", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleLogout))))
@@ -112,6 +113,10 @@ func (s *Server) Handler() http.Handler {
 		s.withAuth(s.withCSRF(http.HandlerFunc(s.handlePurgeChat))),
 	)
 	mux.Handle("POST /api/v1/files", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleUploadFile))))
+	mux.Handle(
+		"DELETE /api/v1/files",
+		s.withAuth(s.withCSRF(http.HandlerFunc(s.handleDeleteAllFiles))),
+	)
 	mux.Handle("GET /api/v1/files/{id}", s.withAuth(http.HandlerFunc(s.handleDownloadFile)))
 	mux.Handle(
 		"DELETE /api/v1/files/{id}",
@@ -120,6 +125,17 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/stream", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleStream))))
 	mux.Handle("POST /api/v1/speech/asr", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleASR))))
 	mux.Handle("POST /api/v1/speech/tts", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleTTS))))
+	for _, method := range []string{
+		http.MethodGet,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+		http.MethodDelete,
+	} {
+		mux.HandleFunc(method+" /api/", func(w http.ResponseWriter, _ *http.Request) {
+			writeAPIError(w, http.StatusNotFound, "not_found", "接口不存在")
+		})
+	}
 	return s.securityHeaders(s.recoverPanic(mux))
 }
 
@@ -131,13 +147,21 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
+	if webui.Available() {
+		webui.Handler().ServeHTTP(w, r)
+		return
+	}
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = fmt.Fprintf(w, `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>chat-deepseek</title></head>
 <body><h1>chat-deepseek</h1><p>服务端已启动，版本 %s。</p>
-<p>Web UI 尚未接入；当前可用 API：<code>/api/v1/auth/login</code>、<code>/healthz</code>。</p></body></html>`,
+<p>Web UI 尚未构建；先运行 pnpm build 并复制 dist 到 internal/webui/dist 后重新编译。</p></body></html>`,
 		buildinfo.Version,
 	)
 }
@@ -440,7 +464,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'")
 		next.ServeHTTP(w, r)
 	})
 }

@@ -16,3 +16,8 @@ tmp/
 /data/
 *.test
 coverage.out
+
+# Embedded UI build output (the .gitkeep keeps go:embed happy)
+!/internal/webui/dist/
+/internal/webui/dist/*
+!/internal/webui/dist/.gitkeep

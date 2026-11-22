@@ -25,7 +25,7 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := userFromContext(r.Context())
-	var purpose string
+	var fileID, purpose string
 	var isImage bool
 	var uploaded *filestore.File
 	for uploaded == nil {
@@ -43,6 +43,9 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch part.FormName() {
+		case "id":
+			value, _ := io.ReadAll(io.LimitReader(part, 160))
+			fileID = strings.TrimSpace(string(value))
 		case "purpose":
 			value, _ := io.ReadAll(io.LimitReader(part, 128))
 			purpose = strings.TrimSpace(string(value))
@@ -62,6 +65,7 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 			uploaded, err = s.files.Create(
 				r.Context(),
 				user.ID,
+				fileID,
 				name,
 				contentType,
 				purpose,
@@ -113,6 +117,19 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, file.Name, time.UnixMilli(file.CreatedAt), handle)
 }
 
+func (s *Server) handleDeleteAllFiles(w http.ResponseWriter, r *http.Request) {
+	if s.files == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "files_unavailable", "文件存储未启用")
+		return
+	}
+	user := userFromContext(r.Context())
+	if err := s.files.DeleteAll(r.Context(), user.ID); err != nil {
+		s.writeFileError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 	if s.files == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "files_unavailable", "文件存储未启用")
@@ -137,6 +154,8 @@ func (s *Server) writeFileError(w http.ResponseWriter, err error) {
 		writeAPIError(w, http.StatusNotFound, "file_not_found", "文件不存在")
 	case errors.Is(err, filestore.ErrTooLarge):
 		writeAPIError(w, http.StatusRequestEntityTooLarge, "file_too_large", "文件超过大小限制")
+	case errors.Is(err, filestore.ErrAlreadyExists):
+		writeAPIError(w, http.StatusConflict, "file_id_conflict", "文件 ID 已被占用")
 	case errors.Is(err, filestore.ErrInvalidFile):
 		writeAPIError(w, http.StatusBadRequest, "invalid_file", "文件信息不合法")
 	default:

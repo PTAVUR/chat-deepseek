@@ -32,6 +32,8 @@ var (
 	ErrTooLarge = errors.New("filestore: file too large")
 	// ErrInvalidFile 表示文件名、purpose 或用户 ID 不合法。
 	ErrInvalidFile = errors.New("filestore: invalid file")
+	// ErrAlreadyExists 表示文件 ID 已被其他用户占用。
+	ErrAlreadyExists = errors.New("filestore: file id already exists")
 )
 
 // File 是附件元数据；ServerID 是上传到 DeepSeek 后拿到的远端 ID。
@@ -65,12 +67,22 @@ func NewStore(db *sql.DB, dataDir string) (*Store, error) {
 // Create 把 src 写入用户目录并登记元数据；size 参数只用于上游限制判断，实际大小以拷贝结果为准。
 func (s *Store) Create(
 	ctx context.Context,
-	userID, name, mimeType, purpose string,
+	userID, fileID, name, mimeType, purpose string,
 	isImage bool,
 	size int64,
 	src io.Reader,
 ) (*File, error) {
 	if err := safeComponent(userID); err != nil {
+		return nil, err
+	}
+	if fileID == "" {
+		generated, err := id.New()
+		if err != nil {
+			return nil, fmt.Errorf("generate file id: %w", err)
+		}
+		fileID = generated
+	}
+	if err := validateFileID(fileID); err != nil {
 		return nil, err
 	}
 	purpose = strings.TrimSpace(purpose)
@@ -93,10 +105,6 @@ func (s *Store) Create(
 	dir := filepath.Join(s.root, userID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create user files directory: %w", err)
-	}
-	fileID, err := id.New()
-	if err != nil {
-		return nil, fmt.Errorf("generate file id: %w", err)
 	}
 	temp, err := os.CreateTemp(dir, ".upload-*")
 	if err != nil {
@@ -125,14 +133,34 @@ func (s *Store) Create(
 		return nil, fmt.Errorf("move file: %w", err)
 	}
 	now := s.now().UnixMilli()
-	if _, err := s.db.ExecContext(
+	result, err := s.db.ExecContext(
 		ctx,
 		`INSERT INTO files (id, user_id, name, size, is_image, mime_type, purpose, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		   name = excluded.name,
+		   size = excluded.size,
+		   is_image = excluded.is_image,
+		   mime_type = excluded.mime_type,
+		   purpose = excluded.purpose,
+		   server_id = NULL,
+		   deleted_at = NULL,
+		   created_at = excluded.created_at
+		 WHERE files.user_id = excluded.user_id`,
 		fileID, userID, name, written, isImage, mimeType, purpose, now,
-	); err != nil {
+	)
+	if err != nil {
 		_ = os.Remove(finalPath)
 		return nil, fmt.Errorf("record file: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		_ = os.Remove(finalPath)
+		return nil, fmt.Errorf("record file rows: %w", err)
+	}
+	if affected == 0 {
+		_ = os.Remove(finalPath)
+		return nil, ErrAlreadyExists
 	}
 	return &File{
 		ID:        fileID,
@@ -220,6 +248,22 @@ func (s *Store) SetServerID(ctx context.Context, userID, fileID, serverID string
 	return nil
 }
 
+// DeleteAll 软删除当前用户的全部附件；用于“删除所有对话”后的清理。
+func (s *Store) DeleteAll(ctx context.Context, userID string) error {
+	if err := safeComponent(userID); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(
+		ctx,
+		`UPDATE files SET deleted_at = ? WHERE user_id = ? AND deleted_at IS NULL`,
+		s.now().UnixMilli(),
+		userID,
+	); err != nil {
+		return fmt.Errorf("delete all files: %w", err)
+	}
+	return nil
+}
+
 // Delete 软删除元数据；原件保留，便于回收站恢复和备份。
 func (s *Store) Delete(ctx context.Context, userID, fileID string) error {
 	result, err := s.db.ExecContext(
@@ -238,6 +282,23 @@ func (s *Store) Delete(ctx context.Context, userID, fileID string) error {
 	}
 	if affected == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+func validateFileID(value string) error {
+	if value == "" || len(value) > 128 {
+		return fmt.Errorf("%w: invalid file id", ErrInvalidFile)
+	}
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+			r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return fmt.Errorf("%w: invalid file id", ErrInvalidFile)
+	}
+	if value == "." || value == ".." {
+		return fmt.Errorf("%w: invalid file id", ErrInvalidFile)
 	}
 	return nil
 }
