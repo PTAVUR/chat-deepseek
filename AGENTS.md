@@ -8,20 +8,21 @@
 - 项目：`chat-deepseek`，本地目录 `chat-deepseek`，版本 `0.1.0-official0.1.3`，MIT。
 - 来源：`https://github.com/deepseek-ai/chat-demo.git` 的克隆。远程 `upstream`（原 `origin`）指向上游，`origin` 指向自己的 GitLab 仓库 `git@gitlab.com:elegantgx/chat-deepseek.git`（SSH）。
 - 分支策略：`main` 只镜像上游、不在上面开发；日常改造在 `feature/*` 分支进行，定期把 `main` 同步到上游后合并进 feature 分支，再推送到 `origin`。
-- 定位：**纯前端静态聊天应用**，没有应用后端。浏览器直接调用 DeepSeek API，API Key 存在浏览器本地。
+- 定位：正在从**纯前端静态聊天应用**改造为 **Go 自托管服务端 + Web 客户端**；服务端保存账户、会话、附件、设置和 API Key，浏览器不再保存聊天或 Key。当前改造进行中。
 - 能力：多会话、消息分支 / 编辑重答 / 重新生成 / 继续生成、流式回复、深度思考、联网搜索与链接阅读、附件上传、Markdown / 代码高亮 / KaTeX / Mermaid、中英双语、明暗主题、移动端、语音输入与朗读、历史导入导出。
-- 技术栈：React 18.3.1、TypeScript 7.0.2（strict）、rspack 2.0.2（SWC + lightningcss）、zustand 4.4.7、idb 8.0.3、fflate、mdast / micromark、katex、prismjs、mermaid。
-- 运行环境：Node.js 22.12+、pnpm。开发端口 `8090`。
-- 部署形态：静态站点（可部署到 GitLab Pages 等静态托管）或直接打开 `dist/index.html`。**保留 `file://` 可用性是现有约束**（见 §7）。
+- 技术栈：React 18.3.1、TypeScript 7.0.2（strict）、rspack 2.0.2（SWC + lightningcss）、zustand 4.4.7、idb 8.0.3、fflate、mdast / micromark、katex、prismjs、mermaid；服务端目标技术栈为 Go 1.27+、SQLite（纯 Go 驱动）。
+- 运行环境：Node.js 22.12+、pnpm、Go 1.27+。开发端口 `8090`。
+- 部署形态：便携式二进制 + 同级 `data/` 目录，由普通用户运行；不要求 root、不写 `/var`、不依赖 systemd。Web 客户端通过浏览器访问。`file://` 静态形态仅用于上游兼容/过渡，最终由服务端托管。
 
 ## 2. 当前状态（2026-11-23 核验）
 
+- 改造状态：v1 服务端骨架已落地（Go module、便携 `data/`、SQLite 迁移、Owner/Admin/User、CLI `setup/user`、登录/CSRF API）；聊天、设置、文件代理和前端尚未接入。
 - Git：当前在 `feature/dev`；`main` 跟踪 `upstream/main`，`feature/dev` 跟踪 `origin/feature/dev`；`AGENTS.md` 提交在 feature 分支，工作区干净。
 - `pnpm type`：通过。
 - `pnpm lint`：通过，`0 warnings and 0 errors`（121 个文件，101 条规则）。
 - `pnpm build`：通过（rspack 约 1.6s），生成 `dist/`（已在 `.gitignore` 中忽略）。
 - `pnpm dev`：本次未长时间启动；配置端口为 `8090`。
-- 测试：**没有测试框架、没有测试文件、没有 `test` 脚本**。仓库里仍保留上游的 `.github/workflows/pages.yml`（GitHub Pages 用，会跑 `type` → `lint` → `build` → 部署）；当前 GitLab 仓库尚未配置 CI。
+- 测试：Go 已有单元/接口测试（`internal/auth`、`account`、`database`、`config`、`server`），`go test ./...` 通过；前端仍没有测试框架/`test` 脚本。仓库里仍保留上游的 `.github/workflows/pages.yml`（GitHub Pages 用）；当前 GitLab 仓库尚未配置 CI。
 - 代码规模：`src` 约 19.4k 行（其中 TS/TSX 约 14.7k 行）；最大文件是 `src/services/chat/store.ts`（约 1.1k 行）。
 - 源码中没有 `TODO` / `FIXME` 标记。
 
@@ -57,9 +58,20 @@ src/
     speech/                   recorder（录音）、readAloud（TTS 播放）
   utils/                      id、format、url、clipboard、图片缩放
   env.d.ts                    CSS Modules / __API_ORIGIN__ / prismjs / katex 的模块声明
+
+cmd/chat-deepseek/            Go CLI 入口（v1 服务端，见 §13）
+internal/
+  config/                     数据目录与 config.json
+  database/                   SQLite 打开与迁移
+  account/                    账户、固定组、最后 Owner 保护
+  auth/                       Argon2id、session、CSRF
+  server/                     /api/v1 认证接口与静态占位页
+  cli/                        setup/serve/user 命令
 ```
 
 `README.md` 是唯一面向用户的功能、运行与数据说明（中文）；英文版已删除，不要恢复双语结构。`src/services/chat/history/README.md` 是历史导入导出的详细设计文档。改功能时同步更新对应文档。
+
+Go 代码遵循 `gofmt`；服务端包不写全局状态，CLI 负责装配依赖。新增 Go 代码尽量放在 `internal/`，与上游 TS 分开，方便合并。
 
 ## 4. 数据模型与本地存储
 
@@ -202,9 +214,11 @@ pnpm lint     # oxlint
 pnpm build    # 产物 dist/
 pnpm dev      # http://localhost:8090
 pnpm format   # oxfmt 全仓库格式化
+go test ./... # Go 单元/接口测试
+go vet ./...  # Go 静态检查
 ```
 
-没有自动化测试，改动后除三条门禁外需要手动冒烟（按改动范围挑选）：
+前端仍没有自动化测试；Go 已有测试。改动后除门禁外需要手动冒烟（按改动范围挑选）：
 
 1. 新建对话、发送、流式输出、停止、重新生成、编辑提问、切换版本、继续生成。
 2. 上传图片 / 文档、拖放 / 粘贴、刷新后补传、删除会话。
@@ -213,7 +227,7 @@ pnpm format   # oxfmt 全仓库格式化
 5. 设置里保存 / 更换 API Key、导入导出 ZIP、删除全部会话。
 6. 构建产物用 `file://` 打开 `dist/index.html`（涉及打包 / 路径 / 资源改动时必测）。
 
-CI 与本地门禁一致：`pnpm type` + `pnpm lint` + `pnpm build`。新增测试框架前先与用户确认（当前没有测试依赖）。
+当前 GitLab 仓库还没有 CI；上游遗留的 GitHub Pages workflow 只跑前端门禁。Go 测试/`go vet` 先在本地执行，GitLab CI 待配置。前端新增测试框架前先与用户确认。
 
 ## 9. 高风险点（改 store / 数据 / 流式时重点看）
 
@@ -229,7 +243,7 @@ CI 与本地门禁一致：`pnpm type` + `pnpm lint` + `pnpm build`。新增测�
 
 ## 10. 与用户协作改造
 
-- **当前改造目标：待用户说明。** 在目标明确前不要大改结构，也不要擅自引入依赖、测试框架或数据迁移。
+- **当前改造目标：按 §13 的 v1 服务端方案实施。** 不再停留在讨论阶段；新增功能优先按 §13 的边界落地。
 - `README.md` 只写用户和开发者需要的事实与用法，保持与上游 README 同等的信息密度；试错过程、环境限制、临时决定写到 §12，不要把 README 变成日志或垃圾桶。
 - 建议流程：确认目标与验收标准 → 读相关模块与数据流 → 给出影响面 / 方案 → 实现 → `type` / `lint` / `build` → 按 §8 手动冒烟 → 汇总改动、风险与未覆盖项。
 - 需要向用户确认的典型问题：
@@ -277,3 +291,102 @@ CI 与本地门禁一致：`pnpm type` + `pnpm lint` + `pnpm build`。新增测�
 - **README 语言**：只保留中文 `README.md`，英文版已删除；README 保持用户文档定位，试错与决策记录放这里。
 - **当前 UI 文案**：应用标题 / `appName` 仍是上游的“API 使用 demo”，`src/services/chat/history/README.md` 仍写 `chat-demo`；这些属于后续代码或文档统一事项。
 - **GitLab 保护分支**：`feature/dev` 在 GitLab 上被保护，`git push --force-with-lease` 会被拒绝（protected branch）。不要重写已推送的提交；需要修历史时先在 GitLab 取消保护，或换新分支。
+- **Go 缓存**：本机默认 `GOPATH`/模块缓存位于 workspace 外，DSH 沙箱下只读。构建/测试需把 `GOPATH`、`GOMODCACHE`、`GOCACHE` 指到 workspace 的 `tmp/`（已 gitignore）；例如 `export GOPATH=$PWD/tmp/gopath GOMODCACHE=$PWD/tmp/gopath/pkg/mod GOCACHE=$PWD/tmp/go-build`。`/tmp` 在部分工具调用间不保留，不要依赖它。
+
+## 13. v1 服务端改造（进行中）
+
+> 2026-11-23 起实施。以下是已确认的设计决策；实现进度同步更新本节。
+
+### 目标
+
+- 自托管（Jellyfin 式）：服务端保存账户、会话、附件、设置和 API Key；浏览器只做客户端。
+- 便携：二进制与 `data/` 同级；普通用户运行，不要求 root、不写 `/var`、不依赖 systemd。
+- 账户/组管理全部走 CLI；Web 只登录、改自己的密码、设置自己的 API Key。
+- 保留现有 React 聊天逻辑（`store.ts`、`reply.ts`、`branches.ts`、`view.ts` 和组件），服务端暂做存储 + DeepSeek SSE 代理，减少与上游同步的冲突。
+- v1 只做 Web；不做 PWA、Android 原生、Docker 交付。
+
+### 便携目录
+
+```text
+chat-deepseek/
+  chat-deepseek          # 二进制
+  data/
+    config.json          # 监听地址等非敏感配置
+    chat.db              # SQLite
+    master.key           # API Key 加密主密钥（0600）
+    files/<user_id>/     # 附件原件
+    backups/             # 快照/导出
+```
+
+- 默认数据目录是二进制所在目录下的 `data/`；`--data-dir` 仅用于测试或特殊安装。
+- 监听高位端口（默认 `8090`），不申请特权；前台运行，SIGINT/SIGTERM 优雅关闭。
+- 不内置 systemd/服务安装；用户可自行用 tmux、nohup 或自己的 supervisor 托管。
+- 数据目录 0700、数据库和密钥 0600；不把敏感数据写到用户主目录之外。
+
+### 账户与组
+
+- 组名单数：`Owner`、`Admin`、`User`。
+- 所有账户默认属于 `User`；`Admin`、`Owner` 是附加组；可同时属于多个组，能力取并集。
+- 最后一名 `Owner` 不能被移除、禁用或删除。
+- `Admin` 可创建/禁用/重置/删除普通 `User`；不能操作 `Admin`/`Owner`，不能授予/撤销组。
+- `Owner` 拥有全部能力：授组、服务器设置、备份/恢复、清理实例。
+- 不提供跨用户聊天浏览；Owner 的物理访问来自服务器目录和备份。
+- Web 没有用户/组管理页；CLI 是唯一管理入口，CLI 是 OS 信任边界。
+- 无公开注册、无邮件/TOTP；忘记密码由 CLI 重置。
+
+### 数据与设置
+
+- SQLite 是唯一数据源：账户、组关系、登录会话、聊天会话 JSON、文件元数据、每用户设置。
+- 附件按用户隔离：`data/files/<user_id>/`。
+- 所有用户设置（主题、语言、位置、朗读音色、thinking/search、侧栏等）存服务端；**前端不使用 localStorage/IndexedDB**，只保留 HttpOnly 会话 cookie。
+- API Key 用 AES-GCM 加密，`master.key` 单独保管；不返回前端、不写日志。
+- 聊天会话软删除/回收站；备份用 `VACUUM INTO` + 附件目录。
+
+### API 与前端边界
+
+- 统一 `/api/v1`；同源 Cookie 会话 + CSRF；登录限流。
+- 主要接口：`auth/login|logout|me|password`、`settings`、`chats`（带 `version`）、`files`、`stream`（DeepSeek SSE 代理）、`export/import`、`healthz`。
+- 聊天分支与上下文构建暂留在 Web TS；服务端保存 `Session` JSON 并代理 SSE。二期原生 App 前再把上下文构建下沉 Go 或复用现有逻辑。
+- 多端并发：会话 `version` 乐观锁（409）+ 单会话生成租约。
+- 前端改造尽量保持 `db.ts`、`settings.ts`、`attachments.ts` 的函数签名，新增 `/api/v1` 客户端；不改 `reply.ts`、`branches.ts`、`view.ts` 和聊天组件，方便上游合并。
+
+### 非目标（v1）
+
+- 公开注册、TOTP、邮件找回、Web 管理页。
+- 自定义组、细粒度权限。
+- 离线、双向同步、CRDT。
+- PWA、Android 原生、Docker 交付、多实例/集群、E2E 加密。
+
+### 实施顺序
+
+1. Go module、配置、`data/` 解析、CLI 骨架。
+2. SQLite 迁移与账户/组模型。
+3. Argon2id、session、CSRF、登录 API、CLI `setup/user`。
+4. 设置、API Key 加密、聊天存储、文件与 DeepSeek SSE 代理。
+5. 前端登录与存储适配，移除 localStorage/IndexedDB。
+6. 备份/恢复、旧 ZIP 数据迁移、测试与文档。
+
+### 上游同步
+
+- `main` 仍只镜像上游；feature 分支承接改造。
+- 尽量不改聊天核心逻辑；服务端和适配逻辑放新文件/新目录。
+- 上游对 `db.ts`、`settings.ts`、`client.ts`、`store.ts` 的改动可能与改造冲突，合并时优先保留上游行为，再补适配层。
+- `package.json`、README、AGENTS 的分叉是预期内的。
+
+### 当前进度
+
+已完成：
+
+- Go module 与依赖；`cmd/chat-deepseek` CLI。
+- 便携 `data/` 解析、`config.json`、SQLite WAL 与 schema v1。
+- 固定组 `Owner/Admin/User`、账户 CRUD、最后活动 Owner 保护。
+- Argon2id、登录会话、CSRF、登录限流、`auth/login|logout|me|password`。
+- CLI `setup`、`serve`、`user add/list/groups/grant/revoke/disable/enable/reset-password/delete`。
+- Go 单元/接口测试；手动端到端验证 setup → user add → serve → login → me → logout。
+
+未完成：
+
+- 每用户设置 API 与 API Key AES-GCM 加密。
+- 聊天会话/文件存储、DeepSeek SSE 代理、生成租约。
+- 前端登录页、API 适配、移除 localStorage/IndexedDB。
+- 备份/恢复、旧 ZIP 数据迁移、静态 UI 嵌入、GitLab CI。
