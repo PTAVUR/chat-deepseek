@@ -23,6 +23,8 @@ import (
 	"gitlab.com/elegantgx/chat-deepseek/internal/buildinfo"
 	"gitlab.com/elegantgx/chat-deepseek/internal/config"
 	"gitlab.com/elegantgx/chat-deepseek/internal/database"
+	"gitlab.com/elegantgx/chat-deepseek/internal/filestore"
+	"gitlab.com/elegantgx/chat-deepseek/internal/secret"
 	"gitlab.com/elegantgx/chat-deepseek/internal/server"
 )
 
@@ -62,6 +64,7 @@ func printUsage() {
 常用参数：
   --data-dir <dir>              数据目录，默认是二进制同级的 data/
   --listen <addr>               监听地址，默认 127.0.0.1:8090
+  --api-origin <url>            DeepSeek API 地址，默认 https://api.deepseek.com
   --no-browser                  不自动打开浏览器（serve）
   --password-stdin              从标准输入读取密码（setup/user add/user reset-password）
 
@@ -169,6 +172,7 @@ func runServe(args []string) error {
 	dataDir := fs.String("data-dir", "", "数据目录")
 	listen := fs.String("listen", "", "监听地址")
 	publicURL := fs.String("public-url", "", "对外访问地址，例如 https://chat.example.com")
+	apiOrigin := fs.String("api-origin", "", "DeepSeek API 地址")
 	noBrowser := fs.Bool("no-browser", false, "不自动打开浏览器")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -191,6 +195,9 @@ func runServe(args []string) error {
 	if *publicURL != "" {
 		cfg.PublicURL = strings.TrimSpace(*publicURL)
 	}
+	if *apiOrigin != "" {
+		cfg.APIOrigin = strings.TrimSpace(*apiOrigin)
+	}
 	db, err := database.Open(dir)
 	if err != nil {
 		return err
@@ -206,8 +213,16 @@ func runServe(args []string) error {
 		return errors.New("还没有活动 Owner；先运行 chat-deepseek setup")
 	}
 
+	key, err := secret.LoadOrCreate(dir)
+	if err != nil {
+		return err
+	}
+	files, err := filestore.NewStore(db, dir)
+	if err != nil {
+		return err
+	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	api := server.New(cfg, db, logger)
+	api := server.New(cfg, db, logger, key, files)
 	listener, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		return fmt.Errorf("监听 %s 失败: %w", cfg.Listen, err)

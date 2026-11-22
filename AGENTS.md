@@ -16,13 +16,13 @@
 
 ## 2. 当前状态（2026-11-23 核验）
 
-- 改造状态：v1 服务端骨架已落地（Go module、便携 `data/`、SQLite 迁移、Owner/Admin/User、CLI `setup/user`、登录/CSRF API）；聊天、设置、文件代理和前端尚未接入。
+- 改造状态：v1 服务端主体已落地（Go module、便携 `data/`、SQLite schema v2、Owner/Admin/User、CLI、登录/CSRF、设置与 API Key 加密、会话版本锁/回收站、附件存储、DeepSeek Files/SSE/ASR/TTS 代理）；前端仍在用 localStorage/IndexedDB，尚未接入服务端。
 - Git：当前在 `feature/dev`；`main` 跟踪 `upstream/main`，`feature/dev` 跟踪 `origin/feature/dev`；`AGENTS.md` 提交在 feature 分支，工作区干净。
 - `pnpm type`：通过。
 - `pnpm lint`：通过，`0 warnings and 0 errors`（121 个文件，101 条规则）。
 - `pnpm build`：通过（rspack 约 1.6s），生成 `dist/`（已在 `.gitignore` 中忽略）。
 - `pnpm dev`：本次未长时间启动；配置端口为 `8090`。
-- 测试：Go 已有单元/接口测试（`internal/auth`、`account`、`database`、`config`、`server`），`go test ./...` 通过；前端仍没有测试框架/`test` 脚本。仓库里仍保留上游的 `.github/workflows/pages.yml`（GitHub Pages 用）；当前 GitLab 仓库尚未配置 CI。
+- 测试：Go 已有单元/接口测试（`internal/auth`、`account`、`database`、`config`、`secret`、`settings`、`chat`、`filestore`、`deepseek`、`server`），`go test ./...` 通过；前端仍没有测试框架/`test` 脚本。仓库里仍保留上游的 `.github/workflows/pages.yml`（GitHub Pages 用）；当前 GitLab 仓库尚未配置 CI。
 - 代码规模：`src` 约 19.4k 行（其中 TS/TSX 约 14.7k 行）；最大文件是 `src/services/chat/store.ts`（约 1.1k 行）。
 - 源码中没有 `TODO` / `FIXME` 标记。
 
@@ -61,11 +61,16 @@ src/
 
 cmd/chat-deepseek/            Go CLI 入口（v1 服务端，见 §13）
 internal/
-  config/                     数据目录与 config.json
-  database/                   SQLite 打开与迁移
+  config/                     数据目录、config.json 与 DeepSeek API 地址
+  database/                   SQLite 打开与 schema 迁移（当前 v2）
   account/                    账户、固定组、最后 Owner 保护
   auth/                       Argon2id、session、CSRF
-  server/                     /api/v1 认证接口与静态占位页
+  secret/                     master.key 与 AES-GCM
+  settings/                   每用户偏好与加密 API Key
+  chat/                       会话 JSON、版本锁、回收站
+  filestore/                  附件原件与元数据
+  deepseek/                   Files / Messages / ASR / TTS 上游客户端
+  server/                     /api/v1 认证、设置、会话、文件、SSE/语音代理
   cli/                        setup/serve/user 命令
 ```
 
@@ -378,15 +383,18 @@ chat-deepseek/
 已完成：
 
 - Go module 与依赖；`cmd/chat-deepseek` CLI。
-- 便携 `data/` 解析、`config.json`、SQLite WAL 与 schema v1。
+- 便携 `data/` 解析、`config.json`、SQLite WAL 与 schema v2（`files.purpose`）。
 - 固定组 `Owner/Admin/User`、账户 CRUD、最后活动 Owner 保护。
 - Argon2id、登录会话、CSRF、登录限流、`auth/login|logout|me|password`。
 - CLI `setup`、`serve`、`user add/list/groups/grant/revoke/disable/enable/reset-password/delete`。
-- Go 单元/接口测试；手动端到端验证 setup → user add → serve → login → me → logout。
+- `master.key` 与 AES-256-GCM；每用户偏好/API Key API，Key 不出服务端、不写日志。
+- 会话 CRUD、`version` 乐观锁、软删除/回收站/恢复/永久删除，按用户隔离。
+- 附件上传/下载/软删除，按用户目录保存；chat 请求里的本地 `file_id` 会惰性上传到 DeepSeek 并缓存远端 ID。
+- DeepSeek SSE 代理、ASR/TTS 代理、API Key 校验；上游错误状态原样透传。
+- Go 单元/接口测试覆盖 secret、settings、chat、filestore、deepseek、server。
 
 未完成：
 
-- 每用户设置 API 与 API Key AES-GCM 加密。
-- 聊天会话/文件存储、DeepSeek SSE 代理、生成租约。
+- 单会话生成租约（表已建，尚未接入 API/流）。
 - 前端登录页、API 适配、移除 localStorage/IndexedDB。
 - 备份/恢复、旧 ZIP 数据迁移、静态 UI 嵌入、GitLab CI。

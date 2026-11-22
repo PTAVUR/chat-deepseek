@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"testing"
 )
 
@@ -76,5 +77,56 @@ func TestSchemaHasNoUnexpectedMissingTable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("query table %s: %v", table, err)
 		}
+	}
+}
+
+func TestMigrateFromV1(t *testing.T) {
+	dataDir := t.TempDir()
+	path := filepath.Join(dataDir, "chat.db")
+	old, err := sql.Open("sqlite", dsn(path))
+	if err != nil {
+		t.Fatalf("open old database: %v", err)
+	}
+	if _, err := old.Exec(schemaV1); err != nil {
+		t.Fatalf("create v1 schema: %v", err)
+	}
+	if _, err := old.Exec("PRAGMA user_version = 1"); err != nil {
+		t.Fatalf("set v1: %v", err)
+	}
+	if err := old.Close(); err != nil {
+		t.Fatalf("close old database: %v", err)
+	}
+
+	db, err := Open(dataDir)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	var version int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatalf("read version: %v", err)
+	}
+	if version != schemaVersion {
+		t.Fatalf("version = %d, want %d", version, schemaVersion)
+	}
+	rows, err := db.Query("PRAGMA table_info(files)")
+	if err != nil {
+		t.Fatalf("table info: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	found := false
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatalf("scan column: %v", err)
+		}
+		if name == "purpose" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("purpose column missing after migration")
 	}
 }

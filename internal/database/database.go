@@ -15,7 +15,7 @@ import (
 )
 
 // schemaVersion 是当前数据库结构版本；每次改表都必须递增。
-const schemaVersion = 1
+const schemaVersion = 2
 
 // Open 打开数据目录下的 chat.db，启用 WAL/外键并执行迁移。
 func Open(dataDir string) (*sql.DB, error) {
@@ -64,28 +64,38 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if version > schemaVersion {
 		return fmt.Errorf("database schema version %d is newer than supported %d", version, schemaVersion)
 	}
-	if version == schemaVersion {
-		return nil
-	}
-	if version > 0 {
-		return fmt.Errorf("no migration path from schema version %d", version)
-	}
-
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin schema migration: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, schemaV1); err != nil {
-		return fmt.Errorf("apply schema: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
-		return fmt.Errorf("set schema version: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit schema migration: %w", err)
+	for _, migration := range migrations {
+		if migration.version <= version {
+			continue
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin schema migration %d: %w", migration.version, err)
+		}
+		if _, err := tx.ExecContext(ctx, migration.sql); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("apply schema %d: %w", migration.version, err)
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", migration.version)); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("set schema version %d: %w", migration.version, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit schema migration %d: %w", migration.version, err)
+		}
+		version = migration.version
 	}
 	return nil
+}
+
+type migration struct {
+	version int
+	sql     string
+}
+
+var migrations = []migration{
+	{version: 1, sql: schemaV1},
+	{version: 2, sql: schemaV2},
 }
 
 const schemaV1 = `
@@ -176,6 +186,12 @@ CREATE TABLE generation_leases (
 );
 
 CREATE INDEX idx_generation_leases_expires ON generation_leases(expires_at);
+`
+
+// schemaV2 记录附件上传到 DeepSeek Files API 时使用的 purpose。
+const schemaV2 = `
+ALTER TABLE files ADD COLUMN purpose TEXT NOT NULL DEFAULT '';
+CREATE INDEX idx_files_user_created ON files(user_id, created_at DESC);
 `
 
 // ErrNotFound 用于调用方区分“没有数据”和真实错误。

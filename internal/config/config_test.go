@@ -12,10 +12,12 @@ func TestSaveLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load defaults: %v", err)
 	}
-	if defaults.Listen != Default().Listen {
-		t.Fatalf("default listen = %q", defaults.Listen)
+	if defaults.Listen != Default().Listen || defaults.APIOrigin != Default().APIOrigin {
+		t.Fatalf("defaults = %+v", defaults)
 	}
-	want := Config{Listen: "0.0.0.0:9000", PublicURL: "https://chat.example.com"}
+	want := Default()
+	want.Listen = "0.0.0.0:9000"
+	want.PublicURL = "https://chat.example.com"
 	if err := Save(dir, want); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

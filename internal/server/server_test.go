@@ -15,15 +15,26 @@ import (
 	"gitlab.com/elegantgx/chat-deepseek/internal/auth"
 	"gitlab.com/elegantgx/chat-deepseek/internal/config"
 	"gitlab.com/elegantgx/chat-deepseek/internal/database"
+	"gitlab.com/elegantgx/chat-deepseek/internal/filestore"
+	"gitlab.com/elegantgx/chat-deepseek/internal/secret"
 )
 
 func newTestServer(t *testing.T) (*Server, *httptest.Server, *http.Client) {
 	t.Helper()
-	db, err := database.Open(t.TempDir())
+	dir := t.TempDir()
+	db, err := database.Open(dir)
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	key, err := secret.LoadOrCreate(dir)
+	if err != nil {
+		t.Fatalf("load key: %v", err)
+	}
+	files, err := filestore.NewStore(db, dir)
+	if err != nil {
+		t.Fatalf("create file store: %v", err)
+	}
 	hash, err := auth.HashPassword("password123")
 	if err != nil {
 		t.Fatalf("hash password: %v", err)
@@ -37,7 +48,7 @@ func newTestServer(t *testing.T) (*Server, *httptest.Server, *http.Client) {
 		t.Fatalf("create owner: %v", err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := New(config.Default(), db, logger)
+	srv := New(config.Default(), db, logger, key, files)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	jar, err := cookiejar.New(nil)

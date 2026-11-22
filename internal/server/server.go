@@ -20,33 +20,55 @@ import (
 	"gitlab.com/elegantgx/chat-deepseek/internal/account"
 	"gitlab.com/elegantgx/chat-deepseek/internal/auth"
 	"gitlab.com/elegantgx/chat-deepseek/internal/buildinfo"
+	"gitlab.com/elegantgx/chat-deepseek/internal/chat"
 	"gitlab.com/elegantgx/chat-deepseek/internal/config"
+	"gitlab.com/elegantgx/chat-deepseek/internal/deepseek"
+	"gitlab.com/elegantgx/chat-deepseek/internal/filestore"
+	"gitlab.com/elegantgx/chat-deepseek/internal/secret"
+	"gitlab.com/elegantgx/chat-deepseek/internal/settings"
 )
 
 // Server 持有 API 依赖；Handler 返回可挂到 http.Server 的处理链。
 type Server struct {
-	cfg      config.Config
-	db       *sql.DB
-	accounts *account.Store
-	sessions *auth.SessionStore
-	logger   *slog.Logger
-	limiter  *loginLimiter
-	now      func() time.Time
+	cfg          config.Config
+	db           *sql.DB
+	accounts     *account.Store
+	sessions     *auth.SessionStore
+	userSettings *settings.Store
+	chats        *chat.Store
+	files        *filestore.Store
+	deepseek     *deepseek.Client
+	logger       *slog.Logger
+	limiter      *loginLimiter
+	now          func() time.Time
 }
 
-// New 创建服务端。
-func New(cfg config.Config, db *sql.DB, logger *slog.Logger) *Server {
+// New 创建服务端。key 用于加密 API Key，必须与数据目录中的 master.key 一致。
+func New(
+	cfg config.Config,
+	db *sql.DB,
+	logger *slog.Logger,
+	key *secret.Key,
+	files *filestore.Store,
+) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if cfg.APIOrigin == "" {
+		cfg.APIOrigin = config.Default().APIOrigin
+	}
 	return &Server{
-		cfg:      cfg,
-		db:       db,
-		accounts: account.NewStore(db),
-		sessions: auth.NewSessionStore(db),
-		logger:   logger,
-		limiter:  newLoginLimiter(10, 15*time.Minute),
-		now:      time.Now,
+		cfg:          cfg,
+		db:           db,
+		accounts:     account.NewStore(db),
+		sessions:     auth.NewSessionStore(db),
+		userSettings: settings.NewStore(db, key),
+		chats:        chat.NewStore(db),
+		files:        files,
+		deepseek:     deepseek.New(cfg.APIOrigin, nil),
+		logger:       logger,
+		limiter:      newLoginLimiter(10, 15*time.Minute),
+		now:          time.Now,
 	}
 }
 
@@ -62,6 +84,42 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/v1/auth/password",
 		s.withAuth(s.withCSRF(http.HandlerFunc(s.handlePassword))),
 	)
+	mux.Handle("GET /api/v1/settings", s.withAuth(http.HandlerFunc(s.handleGetSettings)))
+	mux.Handle("PUT /api/v1/settings", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleUpdateSettings))))
+	mux.Handle(
+		"PUT /api/v1/settings/api-key",
+		s.withAuth(s.withCSRF(http.HandlerFunc(s.handleSetAPIKey))),
+	)
+	mux.Handle(
+		"POST /api/v1/settings/api-key/verify",
+		s.withAuth(s.withCSRF(http.HandlerFunc(s.handleVerifyAPIKey))),
+	)
+	mux.Handle(
+		"DELETE /api/v1/settings/api-key",
+		s.withAuth(s.withCSRF(http.HandlerFunc(s.handleClearAPIKey))),
+	)
+	mux.Handle("GET /api/v1/chats", s.withAuth(http.HandlerFunc(s.handleListChats)))
+	mux.Handle("POST /api/v1/chats", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleCreateChat))))
+	mux.Handle("GET /api/v1/chats/{id}", s.withAuth(http.HandlerFunc(s.handleGetChat)))
+	mux.Handle("PUT /api/v1/chats/{id}", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleUpdateChat))))
+	mux.Handle("DELETE /api/v1/chats/{id}", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleDeleteChat))))
+	mux.Handle(
+		"POST /api/v1/chats/{id}/restore",
+		s.withAuth(s.withCSRF(http.HandlerFunc(s.handleRestoreChat))),
+	)
+	mux.Handle(
+		"DELETE /api/v1/chats/{id}/purge",
+		s.withAuth(s.withCSRF(http.HandlerFunc(s.handlePurgeChat))),
+	)
+	mux.Handle("POST /api/v1/files", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleUploadFile))))
+	mux.Handle("GET /api/v1/files/{id}", s.withAuth(http.HandlerFunc(s.handleDownloadFile)))
+	mux.Handle(
+		"DELETE /api/v1/files/{id}",
+		s.withAuth(s.withCSRF(http.HandlerFunc(s.handleDeleteFile))),
+	)
+	mux.Handle("POST /api/v1/stream", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleStream))))
+	mux.Handle("POST /api/v1/speech/asr", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleASR))))
+	mux.Handle("POST /api/v1/speech/tts", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleTTS))))
 	return s.securityHeaders(s.recoverPanic(mux))
 }
 
@@ -191,7 +249,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user := userFromContext(r.Context())
 	session := sessionFromContext(r.Context())
-	hasKey, err := s.hasAPIKey(r.Context(), user.ID)
+	hasKey, err := s.userSettings.HasAPIKey(r.Context(), user.ID)
 	if err != nil {
 		s.logger.Error("read api key status failed", "error", err)
 		writeAPIError(w, http.StatusInternalServerError, "internal_error", "读取设置失败")
@@ -255,22 +313,6 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) hasAPIKey(ctx context.Context, userID string) (bool, error) {
-	var present bool
-	err := s.db.QueryRowContext(
-		ctx,
-		`SELECT COALESCE(api_key_ciphertext IS NOT NULL, 0) FROM user_settings WHERE user_id = ?`,
-		userID,
-	).Scan(&present)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return present, nil
 }
 
 func toUserJSON(user *account.User) userJSON {
@@ -442,7 +484,11 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	return decodeJSONLimit(w, r, dst, 1<<20)
+}
+
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(dst)

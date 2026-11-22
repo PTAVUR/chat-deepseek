@@ -13,11 +13,16 @@ import (
 type Config struct {
 	Listen    string `json:"listen"`
 	PublicURL string `json:"public_url,omitempty"`
+	// APIOrigin 是 DeepSeek API 的源地址，部署在代理后面时可以改。
+	APIOrigin string `json:"api_origin,omitempty"`
 }
 
 // Default 返回默认配置：只监听本机，使用非特权端口。
 func Default() Config {
-	return Config{Listen: "127.0.0.1:8090"}
+	return Config{
+		Listen:    "127.0.0.1:8090",
+		APIOrigin: "https://api.deepseek.com",
+	}
 }
 
 // ResolveDataDir 返回数据目录。默认与二进制同级下的 data/，可通过参数覆盖。
@@ -63,6 +68,9 @@ func Load(dir string) (Config, error) {
 	}
 	if cfg.Listen == "" {
 		cfg.Listen = Default().Listen
+	}
+	if cfg.APIOrigin == "" {
+		cfg.APIOrigin = Default().APIOrigin
 	}
 	return cfg, nil
 }
