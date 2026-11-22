@@ -10,7 +10,7 @@
 
 ```sh
 pnpm install
-pnpm build:ui:embed
+pnpm build
 CGO_ENABLED=0 go build -o chat-deepseek ./cmd/chat-deepseek
 ```
 
@@ -91,13 +91,12 @@ go run ./cmd/chat-deepseek serve --data-dir ./data-dev --listen 127.0.0.1:8091 -
 pnpm dev
 ```
 
-打开 http://localhost:8090 。修改前端后热更新；修改 Go 后重启服务。生产构建用 `pnpm build:ui:embed` 把 `dist/` 复制到 `internal/webui/dist/`，再由 `go:embed` 嵌进二进制。
+打开 http://localhost:8090 。修改前端后热更新；修改 Go 后重启服务。生产构建用 `pnpm build`：构建到 `dist/` 后自动复制到 `internal/webui/dist/`，再由 `go:embed` 嵌进二进制。
 
 | 命令                 | 用途                               |
 | -------------------- | ---------------------------------- |
 | `pnpm dev`           | 启动前端开发服务器                 |
-| `pnpm build`         | 只构建前端到 `dist/`               |
-| `pnpm build:ui:embed`| 构建前端并复制到 Go 嵌入目录       |
+| `pnpm build`         | 构建前端并复制到 Go 嵌入目录       |
 | `pnpm type`          | TypeScript 类型检查                |
 | `pnpm lint`          | oxlint 检查                        |
 | `pnpm format`        | oxfmt 格式化                       |

@@ -7,11 +7,10 @@
   "type": "module",
   "scripts": {
     "dev": "rspack serve -c rspack.config.ts",
-    "build": "rm -rf dist && NODE_ENV=production rspack build -c rspack.config.ts",
+    "build": "rm -rf dist && NODE_ENV=production rspack build -c rspack.config.ts && node scripts/embed-ui.mjs",
     "type": "tsc -p tsconfig.json",
     "lint": "oxlint src rspack.config.ts",
-    "format": "oxfmt --write .",
-    "build:ui:embed": "pnpm build && node scripts/embed-ui.mjs"
+    "format": "oxfmt --write ."
   },
   "dependencies": {
     "@types/katex": "^0.16.5",

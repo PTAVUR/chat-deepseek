@@ -20,7 +20,7 @@
 - Git：当前在 `feature/dev`；`main` 跟踪 `upstream/main`，`feature/dev` 跟踪 `origin/feature/dev`；`AGENTS.md` 提交在 feature 分支。
 - `pnpm type`：通过。
 - `pnpm lint`：通过，`0 warnings and 0 errors`（约 125 个文件）。
-- `pnpm build`：通过，生成 `dist/`；`pnpm build:ui:embed` 会复制到 `internal/webui/dist/` 供 `go:embed`。
+- `pnpm build`：通过，生成 `dist/` 并复制到 `internal/webui/dist/` 供 `go:embed`。
 - 测试：Go 单元/接口测试覆盖 auth、account、database、config、secret、settings、chat、filestore、deepseek、server；`go test ./...` 通过。前端没有自动化测试。
 - 手动端到端：已用临时数据目录 + dev 代理走通登录、退出、设置/API Key、会话创建/加载/刷新持久化、附件上传和 SSE mock 回复。
 - 代码规模：`src` 约 19k 行；最大文件是 `src/services/chat/store.ts`（约 1.1k 行）。
@@ -206,8 +206,8 @@ Go 代码遵循 `gofmt`；服务端包不写全局状态，CLI 负责装配依�
 ### 服务端托管与嵌入 UI
 
 - 浏览器只访问同源 `/api/v1`；不要恢复 `__API_ORIGIN__` 或前端直连 DeepSeek。
-- `pnpm build` 产物在 `dist/`；`pnpm build:ui:embed` 负责复制到 `internal/webui/dist/`，Go 用 `//go:embed all:dist` 嵌入。`internal/webui/dist/.gitkeep` 保证未构建时也能编译。
-- 修改前端后如果打二进制，必须重新跑 `pnpm build:ui:embed`，否则嵌入的是旧产物。
+- `pnpm build` 构建到 `dist/` 并复制到 `internal/webui/dist/`，Go 用 `//go:embed all:dist` 嵌入。`internal/webui/dist/.gitkeep` 保证未构建时也能编译。
+- 修改前端后如果打二进制，必须重新跑 `pnpm build`，否则嵌入的是旧产物。
 - `internal/webui/dist/*` 是生成物，已 gitignore；不要提交构建产物。
 - CSP 在 `server.securityHeaders`，允许同源脚本/样式、data/blob 图片和 https 图片；新增外链资源前先确认 CSP。
 - `file://` 已不支持；开发用 8091 Go + 8090 dev proxy，生产由 Go 服务托管。
@@ -217,9 +217,8 @@ Go 代码遵循 `gofmt`；服务端包不写全局状态，CLI 负责装配依�
 ```sh
 pnpm type     # tsc 严格类型检查
 pnpm lint     # oxlint
-pnpm build    # 产物 dist/
+pnpm build    # 构建前端并复制到 internal/webui/dist
 pnpm dev      # 前端开发服务器 http://localhost:8090
-pnpm build:ui:embed # 构建并复制到 internal/webui/dist
 pnpm format   # oxfmt 全仓库格式化
 go test ./... # Go 单元/接口测试
 go vet ./...  # Go 静态检查
@@ -240,7 +239,7 @@ pnpm dev
 4. 上传图片 / 文档、拖放 / 粘贴、发送、刷新后仍能显示和下载。
 5. 思考 / 搜索开关、来源面板、链接阅读、引用角标。
 6. 移动端布局（<768px）、键盘弹出；历史导入导出、删除全部会话。
-7. 生产二进制：`pnpm build:ui:embed` 后 `go build`，访问 `/` 能看到 UI 和静态资源。
+7. 生产二进制：`pnpm build` 后 `go build`，访问 `/` 能看到 UI 和静态资源。
 
 当前 GitLab 仓库还没有 CI；上游遗留的 GitHub Pages workflow 只跑前端门禁。Go 测试/`go vet` 先在本地执行，GitLab CI 待配置。前端新增测试框架前先与用户确认。
 
@@ -308,7 +307,7 @@ pnpm dev
 - **浏览器存储**：v1 已移除 localStorage/IndexedDB，旧浏览器数据不会自动迁移到服务端；需要保留历史时先在旧版本导出 ZIP，再在新版导入。
 - **README 语言**：只保留中文 `README.md`，英文版已删除；README 保持用户文档定位，试错与决策记录放这里。
 - **UI 文案**：应用标题、`appName` 已改为 `chat-deepseek`；`src/services/chat/history/README.md` 仍有 `chat-demo` 旧描述，改动归档格式时一并修。
-- **嵌入 UI**：Go 二进制只包含编译时 `internal/webui/dist/` 里的内容；仓库只提交 `.gitkeep`。忘记 `pnpm build:ui:embed` 会得到占位页，不是运行时找不到文件。
+- **嵌入 UI**：Go 二进制只包含编译时 `internal/webui/dist/` 里的内容；仓库只提交 `.gitkeep`。忘记 `pnpm build` 会得到占位页，不是运行时找不到文件。
 - **GitLab 保护分支**：`feature/dev` 在 GitLab 上被保护，`git push --force-with-lease` 会被拒绝（protected branch）。不要重写已推送的提交；需要修历史时先在 GitLab 取消保护，或换新分支。
 - **Go 缓存**：本机默认 `GOPATH`/模块缓存位于 workspace 外，DSH 沙箱下只读。构建/测试需把 `GOPATH`、`GOMODCACHE`、`GOCACHE` 指到 workspace 的 `tmp/`（已 gitignore）；例如 `export GOPATH=$PWD/tmp/gopath GOMODCACHE=$PWD/tmp/gopath/pkg/mod GOCACHE=$PWD/tmp/go-build`。`/tmp` 在部分工具调用间不保留，不要依赖它。
 
