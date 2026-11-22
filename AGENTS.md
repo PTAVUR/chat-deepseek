@@ -5,7 +5,7 @@
 
 ## 1. 项目是什么
 
-- 项目：`chat-demo`，本地目录 `chat-deepseek`，版本 `0.1.3`，MIT。
+- 项目：`chat-deepseek`，本地目录 `chat-deepseek`，版本 `0.1.0`，MIT。
 - 来源：`https://github.com/deepseek-ai/chat-demo.git` 的克隆。远程 `upstream`（原 `origin`）指向上游，`origin` 指向自己的 GitLab 仓库 `git@gitlab.com:elegantgx/chat-deepseek.git`（SSH）。
 - 分支策略：`main` 只镜像上游、不在上面开发；日常改造在 `feature/*` 分支进行，定期把 `main` 同步到上游后合并进 feature 分支，再推送到 `origin`。
 - 定位：**纯前端静态聊天应用**，没有应用后端。浏览器直接调用 DeepSeek API，API Key 存在浏览器本地。
@@ -14,7 +14,7 @@
 - 运行环境：Node.js 22.12+、pnpm。开发端口 `8090`。
 - 部署形态：静态站点（GitHub Pages）或直接打开 `dist/index.html`。**保留 `file://` 可用性是现有约束**（见 §7）。
 
-## 2. 当前状态（2026-11-22 核验）
+## 2. 当前状态（2026-11-23 核验）
 
 - Git：当前在 `feature/dev`；`main` 跟踪 `upstream/main`，`feature/dev` 跟踪 `origin/feature/dev`；`AGENTS.md` 提交在 feature 分支，工作区干净。
 - `pnpm type`：通过。
@@ -258,7 +258,8 @@ CI 与本地门禁一致：`pnpm type` + `pnpm lint` + `pnpm build`。新增测�
 
 - 冲突只在 `feature/*` 分支解决，不要为了让合并通过而修改 `main`。
 - 标签：上游 tag 原样镜像到 `origin`（`v0.1.0`–`v0.1.3` 已推送）；同步上游 tag 用 `git fetch upstream --tags`，再 `git push origin --tags`。
-- 我们自己的发布 tag 使用独立格式，例如 `1.0.0-official0.3.0`（不带 `v` 前缀，不与上游 `vX.Y.Z` 混用）；发布时按此规则打 tag。
+- 版本：`package.json` 的名称是 `chat-deepseek`，版本是 `0.1.0`；版本号第一位（major）跟随上游，当前上游也是 `0.x`。`package.json` 的版本不带 `v`。
+- 我们自己的发布 tag 带 `v` 前缀，格式为 `v<我们的版本>-official<上游版本>`，例如 `v1.0.0-official0.3.0`；当前若发布会得到 `v0.1.0-official0.1.3`，不与上游 `vX.Y.Z` 混用。
 - `AGENTS.md` 提交在 `feature/dev`，不要提交到 `main`。
 - 本机 SSH 注意：系统配置 `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` 权限异常，仓库已设置 `core.sshCommand = ssh -F /dev/null` 绕过；换到 SSH 正常的机器时可删除该配置。
 - 查看当前跟踪关系：`git remote -v`、`git branch -vv`。
