@@ -1,11 +1,13 @@
 import { create } from 'zustand'
 import type { TranslationMessage } from '../../i18n/index.js'
 import { createId } from '../../utils/id.js'
+import { deleteFile } from '../api/client.js'
 import {
   cancelUpload,
   isImage,
   resolveMimeType,
   uploadAttachment,
+  useUploads,
   validateFiles,
   type UploadTask,
 } from '../attachments.js'
@@ -111,12 +113,21 @@ export const prepareDraftMessage = (draft: Draft, tasks: Record<string, UploadTa
   return { text, files }
 }
 
+/** 取消上传；已经上传成功的文件同时从服务端删除，避免草稿删除后留下孤儿附件。 */
+const discardUpload = (id: string) => {
+  const task = useUploads.getState().tasks[id]
+  cancelUpload(id)
+  if (task?.status === 'done') {
+    void deleteFile(id).catch(() => {})
+  }
+}
+
 export const removeDraftAttachment = (sessionId: string | null, attachmentId: string) => {
   const attachment = getDraft(sessionId).attachments.find((item) => item.id === attachmentId)
   if (!attachment) {
     return
   }
-  cancelUpload(attachment.id)
+  discardUpload(attachment.id)
   updateDraft(sessionId, (draft) => ({
     ...draft,
     attachments: draft.attachments.filter((item) => item.id !== attachmentId),
@@ -130,13 +141,13 @@ export const clearSentDraft = (sessionId: string | null) => {
 
 /** 删除会话或替换历史成功后，释放尚未发送的草稿及上传任务。 */
 export const clearDraft = (sessionId: string | null) => {
-  getDraft(sessionId).attachments.forEach((attachment) => cancelUpload(attachment.id))
+  getDraft(sessionId).attachments.forEach((attachment) => discardUpload(attachment.id))
   updateDraft(sessionId, () => EMPTY_DRAFT)
 }
 
 export const clearAllDrafts = () => {
   for (const draft of useDrafts.getState().drafts.values()) {
-    draft.attachments.forEach((attachment) => cancelUpload(attachment.id))
+    draft.attachments.forEach((attachment) => discardUpload(attachment.id))
   }
   useDrafts.setState({ drafts: new Map() })
 }

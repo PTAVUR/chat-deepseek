@@ -61,7 +61,10 @@ func NewStore(db *sql.DB, dataDir string) (*Store, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("create files directory: %w", err)
 	}
-	return &Store{db: db, root: root, now: time.Now}, nil
+	store := &Store{db: db, root: root, now: time.Now}
+	// 旧版本删除单个文件时只删原件、留下空的用户目录；启动时顺手清掉。
+	store.removeEmptyUserDirs()
+	return store, nil
 }
 
 // Create 把 src 写入用户目录并登记元数据；size 参数只用于上游限制判断，实际大小以拷贝结果为准。
@@ -144,7 +147,6 @@ func (s *Store) Create(
 		   mime_type = excluded.mime_type,
 		   purpose = excluded.purpose,
 		   server_id = NULL,
-		   deleted_at = NULL,
 		   created_at = excluded.created_at
 		 WHERE files.user_id = excluded.user_id`,
 		fileID, userID, name, written, isImage, mimeType, purpose, now,
@@ -200,7 +202,7 @@ func (s *Store) Get(ctx context.Context, userID, fileID string) (*File, error) {
 	err := s.db.QueryRowContext(
 		ctx,
 		`SELECT id, name, size, is_image, mime_type, purpose, server_id, created_at
-		 FROM files WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+		 FROM files WHERE id = ? AND user_id = ?`,
 		fileID,
 		userID,
 	).Scan(
@@ -230,7 +232,7 @@ func (s *Store) Get(ctx context.Context, userID, fileID string) (*File, error) {
 func (s *Store) SetServerID(ctx context.Context, userID, fileID, serverID string) error {
 	result, err := s.db.ExecContext(
 		ctx,
-		`UPDATE files SET server_id = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+		`UPDATE files SET server_id = ? WHERE id = ? AND user_id = ?`,
 		serverID,
 		fileID,
 		userID,
@@ -248,28 +250,69 @@ func (s *Store) SetServerID(ctx context.Context, userID, fileID, serverID string
 	return nil
 }
 
-// DeleteAll 软删除当前用户的全部附件；用于“删除所有对话”后的清理。
+// IDs 返回当前用户的全部附件 ID，供批量替换前记录待清理文件。
+func (s *Store) IDs(ctx context.Context, userID string) ([]string, error) {
+	if err := safeComponent(userID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM files WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list file ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan file id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list file ids: %w", err)
+	}
+	return ids, nil
+}
+
+// DeleteAll 永久删除当前用户的全部附件：先清空元数据，再删除整个用户目录。
+// 目录可能包含旧版本软删除留下的原件，因此即使 files 表为空也要清理目录。
 func (s *Store) DeleteAll(ctx context.Context, userID string) error {
 	if err := safeComponent(userID); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(
-		ctx,
-		`UPDATE files SET deleted_at = ? WHERE user_id = ? AND deleted_at IS NULL`,
-		s.now().UnixMilli(),
-		userID,
-	); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return fmt.Errorf("delete all files: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM files WHERE user_id = ?`, userID); err != nil {
+		return fmt.Errorf("delete all files: %w", err)
+	}
+	if err := os.RemoveAll(filepath.Join(s.root, userID)); err != nil {
+		return fmt.Errorf("remove user files directory: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete all files: %w", err)
 	}
 	return nil
 }
 
-// Delete 软删除元数据；原件保留，便于回收站恢复和备份。
+// Delete 永久删除元数据和原件；旧版本软删除的记录也会一并清掉。
 func (s *Store) Delete(ctx context.Context, userID, fileID string) error {
-	result, err := s.db.ExecContext(
+	if err := safeComponent(userID); err != nil {
+		return err
+	}
+	if err := validateFileID(fileID); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("delete file: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(
 		ctx,
-		`UPDATE files SET deleted_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
-		s.now().UnixMilli(),
+		`DELETE FROM files WHERE id = ? AND user_id = ?`,
 		fileID,
 		userID,
 	)
@@ -283,7 +326,35 @@ func (s *Store) Delete(ctx context.Context, userID, fileID string) error {
 	if affected == 0 {
 		return ErrNotFound
 	}
+	if err := os.Remove(filepath.Join(s.root, userID, fileID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove file: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete file: %w", err)
+	}
+	s.removeEmptyUserDir(userID)
 	return nil
+}
+
+func (s *Store) removeEmptyUserDir(userID string) {
+	dir := filepath.Join(s.root, userID)
+	entries, err := os.ReadDir(dir)
+	if err == nil && len(entries) == 0 {
+		_ = os.Remove(dir)
+	}
+}
+
+func (s *Store) removeEmptyUserDirs() {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		s.removeEmptyUserDir(entry.Name())
+	}
 }
 
 func validateFileID(value string) error {

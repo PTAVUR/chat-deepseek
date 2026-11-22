@@ -17,6 +17,8 @@ export const Modal = ({
   closable = false,
   className,
   mainClassName,
+  headerClassName,
+  titleClassName,
   onClose,
 }: {
   title: ReactNode
@@ -27,6 +29,10 @@ export const Modal = ({
   className?: string
   /** 内容区的 class */
   mainClassName?: string
+  /** 标题栏的 class */
+  headerClassName?: string
+  /** 标题文字的 class */
+  titleClassName?: string
   onClose: () => void
 }) => {
   const t = useTranslate()
@@ -59,8 +65,8 @@ export const Modal = ({
         aria-modal="true"
         aria-labelledby={titleId}
       >
-        <div className={styles.header}>
-          <div id={titleId} className={styles.title}>
+        <div className={clsx(styles.header, headerClassName)}>
+          <div id={titleId} className={clsx(styles.title, titleClassName)}>
             {title}
           </div>
           {closable ? (

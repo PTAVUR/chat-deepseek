@@ -484,8 +484,8 @@ export const renameSession = (id: string, title: string) => {
 }
 
 /**
- * 删除会话；本地原件仅在没有其他会话引用时清理。远端文件不删：导入、编辑、重新生成都会复用同一个附件，
- * 同一服务端文件可能被多个会话引用，不维护引用计数。
+ * 永久删除会话；服务端会清理不再被其他会话引用的本地附件。DeepSeek 远端文件不删：
+ * 导入、编辑、重新生成都可能复用同一个附件。
  */
 export const removeSession = (id: string): Promise<boolean> => {
   const task = removeSessionData(id).finally(() => deletionTasks.delete(task))

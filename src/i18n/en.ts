@@ -12,8 +12,8 @@ export const en = {
   sessionLoadFailed: 'Unable to load this chat. Please try again.',
   sessionSaveFailed: 'This chat has not been saved to the server. Retry before closing this page.',
   sessionDeleteFailed: 'Unable to delete this chat. Please try again.',
-  settings: 'Settings',
-  appName: 'chat-deepseek',
+  settings: 'System settings',
+  appName: 'Deepseek',
   deleteSessionModalContentTitle: 'Delete chat?',
   deleteSessionWithFilesDescription:
     'This chat and its uploaded files will be permanently deleted and cannot be recovered. Delete this chat?',
@@ -97,7 +97,37 @@ export const en = {
   settingsLocationCity: 'Select city',
   settingsLocationRegion: 'Select country or region',
   settingDialogAsideGeneralOptionLabel: 'General',
+  settingDialogAsideAccountOptionLabel: 'Account',
   settingDialogAsideDataOptionLabel: 'Data',
+  settingDialogAsideAboutOptionLabel: 'About',
+  accountAvatar: 'Avatar',
+  accountUploadAvatar: 'Upload avatar',
+  accountRemoveAvatar: 'Remove avatar',
+  accountAvatarInvalid: 'Cannot read this image. Choose a PNG/JPEG/WebP file.',
+  accountAvatarTooLarge: 'This avatar is too large. Choose another image.',
+  accountUsername: 'Username',
+  accountSave: 'Save',
+  accountUsernameTaken: 'This username is already taken',
+  accountUsernameInvalid: 'Username must be 1-64 letters, digits or . _ -',
+  accountPassword: 'Change password',
+  accountPasswordTitle: 'Password',
+  accountPasswordDescription: 'Your current session stays signed in.',
+  accountCurrentPassword: 'Current password',
+  accountNewPassword: 'New password (at least 8 characters)',
+  accountConfirmPassword: 'Confirm new password',
+  accountChangePassword: 'Change password',
+  accountPasswordMismatch: 'The new passwords do not match',
+  accountPasswordWrong: 'Current password is incorrect',
+  accountPasswordTooShort: 'The new password must be at least 8 characters',
+  accountPasswordUpdated: 'Password updated',
+  accountSaveFailed: 'Save failed. Please try again.',
+  aboutContent: `chat-deepseek is a self-hosted DeepSeek chat client. Accounts, chats, attachments, settings and API keys stay on your server; the browser only keeps a sign-in cookie.
+
+It supports multiple chats and message branches, streaming replies, stop and continue, deep thinking, web search, link reading with citations, Markdown, syntax highlighting, KaTeX formulas, Mermaid diagrams, file attachments, voice input and read-aloud, and chat history import/export.
+
+Accounts and groups are managed by the server CLI. After signing in, the web UI can only change your username, password and avatar; the API key is configured under Data. The API key is encrypted with AES-256-GCM and never returned to the browser.
+
+The server uses Go and SQLite, and the data directory sits next to the binary.`,
   avatarMenuSettingsDialogThemeItemLabel: 'Theme',
   avatarMenuSettingsDialogThemeSelectLightOption: 'Light',
   avatarMenuSettingsDialogThemeSelectDarkOption: 'Dark',
@@ -115,18 +145,17 @@ export const en = {
   historyImportConfirmTitle: 'Import chat history?',
   historyImportConfirmDescription:
     'The uploaded chat history will replace all your current chats. Import anyway?',
-  historyImportDescription:
-    'Importing chat history replaces all chats and server-side attachments. Supports ZIP files exported from DeepSeek.',
+  historyImportDescription: 'Replaces all chats and attachments with a ZIP file.',
   historyImportedOne: 'Imported 1 chat',
   historyImported: 'Imported {count} chats',
   historyImportFailed:
     'File import failed. The file format may be invalid, or the ZIP file may use an older chat export format. Please export your chat history from DeepSeek again and retry the import.',
   historyExportFailed: 'Export failed: {message}',
   exportAllLabel: 'Export all chats',
-  historyExportDescription:
-    'Includes all chat history and server-side images. Other attachments retain file details only. Your API Key is not included.',
+  historyExportDescription: 'Chats and images only; no API Key.',
   exportAllDownload: 'Download',
   deleteAllSessions: 'Delete all chats',
+  deleteAllSessionsDescription: 'Server attachments and unsent drafts are deleted too.',
   deleteAllSessionsModalTitle: 'Once deleted, all chats will be cleared and cannot be recovered.',
   deleteAllSessionsModalDescription:
     'Server-side attachments and unsent drafts will also be deleted.',
@@ -178,8 +207,11 @@ export const en = {
   latestReminderLanguage: 'English',
   settingsLocaleZhCN: 'Simplified Chinese',
   settingsLocaleEnUS: 'English',
-  loginTitle: 'Sign in to chat-deepseek',
+  loginTitle: 'Sign in to Deepseek',
   loginDescription: 'Use an account created by the server administrator.',
+  loginAsideTitle: 'Self-hosted',
+  loginAsideDescription: 'Accounts, chats and files stay on your server.',
+  loginFooter: 'Self-hosted instance',
   loginUsername: 'Username',
   loginPassword: 'Password',
   loginAction: 'Sign in',

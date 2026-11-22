@@ -21,7 +21,11 @@ import (
 
 func newTestServer(t *testing.T) (*Server, *httptest.Server, *http.Client) {
 	t.Helper()
-	dir := t.TempDir()
+	return newTestServerAt(t, t.TempDir())
+}
+
+func newTestServerAt(t *testing.T, dir string) (*Server, *httptest.Server, *http.Client) {
+	t.Helper()
 	db, err := database.Open(dir)
 	if err != nil {
 		t.Fatalf("open database: %v", err)
@@ -207,5 +211,79 @@ func TestDisabledUserCannotLogin(t *testing.T) {
 	}, "")
 	if status != http.StatusForbidden {
 		t.Fatalf("disabled login status = %d", status)
+	}
+}
+
+func TestUsernameAndAvatarUpdate(t *testing.T) {
+	srv, ts, client := newTestServer(t)
+	_, csrf := login(t, client, ts.URL)
+
+	status, body := requestJSON(t, client, http.MethodPut, ts.URL+"/api/v1/auth/username", map[string]string{
+		"username": "gx",
+	}, csrf)
+	if status != http.StatusNoContent {
+		t.Fatalf("update username status = %d, body = %s", status, body)
+	}
+
+	status, body = requestJSON(t, client, http.MethodGet, ts.URL+"/api/v1/auth/me", nil, "")
+	if status != http.StatusOK {
+		t.Fatalf("me status = %d, body = %s", status, body)
+	}
+	var me meResponse
+	if err := json.Unmarshal(body, &me); err != nil {
+		t.Fatalf("decode me: %v", err)
+	}
+	if me.User.Username != "gx" {
+		t.Fatalf("username = %q, want gx", me.User.Username)
+	}
+
+	hash, err := auth.HashPassword("password123")
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	if _, err := account.NewStore(srv.db).Create(
+		context.Background(),
+		"taken",
+		hash,
+		[]account.Group{account.GroupUser},
+	); err != nil {
+		t.Fatalf("create taken user: %v", err)
+	}
+	status, _ = requestJSON(t, client, http.MethodPut, ts.URL+"/api/v1/auth/username", map[string]string{
+		"username": "taken",
+	}, csrf)
+	if status != http.StatusConflict {
+		t.Fatalf("duplicate username status = %d", status)
+	}
+	status, _ = requestJSON(t, client, http.MethodPut, ts.URL+"/api/v1/auth/username", map[string]string{
+		"username": "bad name",
+	}, csrf)
+	if status != http.StatusBadRequest {
+		t.Fatalf("invalid username status = %d", status)
+	}
+
+	const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	avatar := "data:image/png;base64," + png
+	status, body = requestJSON(t, client, http.MethodPut, ts.URL+"/api/v1/auth/avatar", map[string]string{
+		"avatar": avatar,
+	}, csrf)
+	if status != http.StatusNoContent {
+		t.Fatalf("update avatar status = %d, body = %s", status, body)
+	}
+	status, body = requestJSON(t, client, http.MethodGet, ts.URL+"/api/v1/auth/me", nil, "")
+	if status != http.StatusOK {
+		t.Fatalf("me status = %d, body = %s", status, body)
+	}
+	if err := json.Unmarshal(body, &me); err != nil {
+		t.Fatalf("decode me: %v", err)
+	}
+	if me.User.Avatar != avatar {
+		t.Fatalf("avatar was not returned")
+	}
+	status, _ = requestJSON(t, client, http.MethodPut, ts.URL+"/api/v1/auth/avatar", map[string]string{
+		"avatar": "not-a-data-url",
+	}, csrf)
+	if status != http.StatusBadRequest {
+		t.Fatalf("invalid avatar status = %d", status)
 	}
 }

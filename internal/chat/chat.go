@@ -1,4 +1,4 @@
-// Package chat 保存完整聊天会话 JSON，并提供按用户隔离的软删除与版本锁。
+// Package chat 保存完整聊天会话 JSON，并提供按用户隔离的永久删除与版本锁。
 package chat
 
 import (
@@ -143,14 +143,64 @@ func (s *Store) Create(ctx context.Context, userID string, raw []byte) (Stored, 
 	return Stored{Session: json.RawMessage(raw), Version: 1}, nil
 }
 
-// Get 读取未删除的会话。
+// Import 用给定会话原子替换该用户的全部会话；任一校验失败时不改动旧数据。
+func (s *Store) Import(ctx context.Context, userID string, sessions [][]byte) error {
+	parsed := make([]sessionEnvelope, 0, len(sessions))
+	ids := make(map[string]struct{}, len(sessions))
+	for _, raw := range sessions {
+		session, err := parseSession(raw)
+		if err != nil {
+			return err
+		}
+		if _, ok := ids[session.ID]; ok {
+			return fmt.Errorf("%w: duplicate id", ErrInvalidSession)
+		}
+		ids[session.ID] = struct{}{}
+		parsed = append(parsed, session)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("import chats: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chats WHERE user_id = ?`, userID); err != nil {
+		return fmt.Errorf("clear chats for import: %w", err)
+	}
+	now := s.now().UnixMilli()
+	for index, session := range parsed {
+		createdAt := session.CreatedAt
+		if createdAt <= 0 {
+			createdAt = now
+		}
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO chats (id, user_id, title, data, version, created_at, updated_at, root_message_id)
+			 VALUES (?, ?, ?, ?, 1, ?, ?, ?)`,
+			session.ID,
+			userID,
+			strings.TrimSpace(session.Title),
+			sessions[index],
+			createdAt,
+			now,
+			rootMessageID(session.RootMessageID),
+		); err != nil {
+			return fmt.Errorf("insert imported chat: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit import: %w", err)
+	}
+	return nil
+}
+
+// Get 读取当前用户的会话。
 func (s *Store) Get(ctx context.Context, userID, id string) (Stored, error) {
 	var data []byte
 	var version int64
 	err := s.db.QueryRowContext(
 		ctx,
 		`SELECT data, version FROM chats
-		 WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+		 WHERE id = ? AND user_id = ?`,
 		id,
 		userID,
 	).Scan(&data, &version)
@@ -163,16 +213,12 @@ func (s *Store) Get(ctx context.Context, userID, id string) (Stored, error) {
 	return Stored{Session: json.RawMessage(data), Version: version}, nil
 }
 
-// List 返回会话摘要；deleted 为 true 时返回回收站内容。
-func (s *Store) List(ctx context.Context, userID string, deleted bool) ([]Summary, error) {
-	condition := "deleted_at IS NULL"
-	if deleted {
-		condition = "deleted_at IS NOT NULL"
-	}
+// List 返回会话摘要。
+func (s *Store) List(ctx context.Context, userID string) ([]Summary, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
 		`SELECT id, title, created_at, updated_at FROM chats
-		 WHERE user_id = ? AND `+condition+`
+		 WHERE user_id = ?
 		 ORDER BY updated_at DESC`,
 		userID,
 	)
@@ -211,7 +257,7 @@ func (s *Store) Update(ctx context.Context, userID, id string, raw []byte, versi
 		ctx,
 		`UPDATE chats SET
 		   title = ?, data = ?, version = version + 1, updated_at = ?, root_message_id = ?
-		 WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND version = ?`,
+		 WHERE id = ? AND user_id = ? AND version = ?`,
 		strings.TrimSpace(session.Title),
 		raw,
 		now,
@@ -231,7 +277,7 @@ func (s *Store) Update(ctx context.Context, userID, id string, raw []byte, versi
 		var current int64
 		err := s.db.QueryRowContext(
 			ctx,
-			`SELECT version FROM chats WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+			`SELECT version FROM chats WHERE id = ? AND user_id = ?`,
 			id,
 			userID,
 		).Scan(&current)
@@ -246,58 +292,112 @@ func (s *Store) Update(ctx context.Context, userID, id string, raw []byte, versi
 	return Stored{Session: json.RawMessage(raw), Version: version + 1}, nil
 }
 
-// SoftDelete 把会话移入回收站。
-func (s *Store) SoftDelete(ctx context.Context, userID, id string) error {
-	result, err := s.db.ExecContext(
+// Delete 永久删除会话，并返回会话引用过的附件 ID。
+// 附件是否仍被其他会话引用由调用方判断，Store 不直接操作文件。
+func (s *Store) Delete(ctx context.Context, userID, id string) ([]string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("delete chat: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var data []byte
+	err = tx.QueryRowContext(
 		ctx,
-		`UPDATE chats SET deleted_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
-		s.now().UnixMilli(),
+		`SELECT data FROM chats WHERE id = ? AND user_id = ?`,
+		id,
+		userID,
+	).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read chat for delete: %w", err)
+	}
+	fileIDs := attachmentIDs(data)
+	result, err := tx.ExecContext(
+		ctx,
+		`DELETE FROM chats WHERE id = ? AND user_id = ?`,
 		id,
 		userID,
 	)
 	if err != nil {
-		return fmt.Errorf("delete chat: %w", err)
+		return nil, fmt.Errorf("delete chat: %w", err)
 	}
-	return requireAffected(result, "delete chat")
-}
-
-// Restore 从回收站恢复会话。
-func (s *Store) Restore(ctx context.Context, userID, id string) error {
-	result, err := s.db.ExecContext(
-		ctx,
-		`UPDATE chats SET deleted_at = NULL, updated_at = ?
-		 WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL`,
-		s.now().UnixMilli(),
-		id,
-		userID,
-	)
-	if err != nil {
-		return fmt.Errorf("restore chat: %w", err)
-	}
-	return requireAffected(result, "restore chat")
-}
-
-// Purge 永久删除回收站中的会话。
-func (s *Store) Purge(ctx context.Context, userID, id string) error {
-	result, err := s.db.ExecContext(
-		ctx,
-		`DELETE FROM chats WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL`,
-		id,
-		userID,
-	)
-	if err != nil {
-		return fmt.Errorf("purge chat: %w", err)
-	}
-	return requireAffected(result, "purge chat")
-}
-
-func requireAffected(result sql.Result, action string) error {
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("%s rows: %w", action, err)
+		return nil, fmt.Errorf("delete chat rows: %w", err)
 	}
 	if affected == 0 {
-		return ErrNotFound
+		return nil, ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit delete chat: %w", err)
+	}
+	return fileIDs, nil
+}
+
+// ReferencedFileIDs 返回该用户所有会话仍引用的附件 ID。
+// 删除会话后用它判断附件是否还有其他引用，避免误删共享原件。
+func (s *Store) ReferencedFileIDs(ctx context.Context, userID string) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT data FROM chats WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list chat references: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	referenced := make(map[string]struct{})
+	for rows.Next() {
+		var data []byte
+		if err := rows.Scan(&data); err != nil {
+			return nil, fmt.Errorf("scan chat references: %w", err)
+		}
+		if err := collectAttachmentIDs(data, referenced); err != nil {
+			return nil, fmt.Errorf("parse chat references: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list chat references: %w", err)
+	}
+	return referenced, nil
+}
+
+type sessionFileReference struct {
+	ID string `json:"id"`
+}
+
+type sessionMessageReference struct {
+	Files []sessionFileReference `json:"files"`
+}
+
+type sessionReferences struct {
+	Messages []sessionMessageReference `json:"messages"`
+}
+
+// attachmentIDs 从会话 JSON 提取附件 ID；损坏的会话不阻塞永久删除，只是不清理附件。
+func attachmentIDs(raw []byte) []string {
+	seen := make(map[string]struct{})
+	if err := collectAttachmentIDs(raw, seen); err != nil {
+		return nil
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func collectAttachmentIDs(raw []byte, target map[string]struct{}) error {
+	var session sessionReferences
+	if err := json.Unmarshal(raw, &session); err != nil {
+		return err
+	}
+	for _, message := range session.Messages {
+		for _, file := range message.Files {
+			if file.ID != "" {
+				target[file.ID] = struct{}{}
+			}
+		}
 	}
 	return nil
 }

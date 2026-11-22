@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useTranslate } from '../i18n/index.js'
+import type { AuthUser } from '../services/api/server.js'
 import { useSettings } from '../services/settings.js'
 import { useIsMobile, useMobileViewport, usePreventPageScroll } from './viewport.js'
 import {
@@ -26,7 +27,13 @@ import { closeMobileSider } from '../components/sider/mobileSiderState.js'
 import { MobileSider, Sider } from '../components/sider/Sider.js'
 import styles from './App.module.css'
 
-export const App = () => {
+export const App = ({
+  user,
+  onUserChange,
+}: {
+  user: AuthUser
+  onUserChange: (user: AuthUser) => void
+}) => {
   const t = useTranslate()
   const isMobile = useIsMobile()
   const locale = useSettings((state) => state.locale)
@@ -76,7 +83,7 @@ export const App = () => {
   return (
     <>
       <div ref={frameRef} className={styles.frame}>
-        {isMobile ? <MobileSider /> : siderCollapsed ? null : <Sider />}
+        {isMobile ? <MobileSider user={user} /> : siderCollapsed ? null : <Sider user={user} />}
         <main className={styles.main}>
           {saveError ? (
             <div className={styles.saveError} role="alert">
@@ -132,7 +139,7 @@ export const App = () => {
         </main>
         <SearchPanel />
       </div>
-      <SettingsDialog />
+      <SettingsDialog user={user} onUserChange={onUserChange} />
       <Toast />
     </>
   )

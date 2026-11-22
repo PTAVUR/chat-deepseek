@@ -76,7 +76,20 @@ export const createConfig = ({ devServer }: ConfigOptions = {}): Configuration =
       meta: { 'application-version': version },
     }),
     new rspack.CopyRspackPlugin({
-      patterns: [{ from: path.resolve(root, 'LICENSE'), to: 'LICENSE', toType: 'file' }],
+      patterns: [
+        { from: path.resolve(root, 'LICENSE'), to: 'LICENSE', toType: 'file' },
+        { from: path.resolve(root, 'src/assets/favicon.svg'), to: 'favicon.svg', toType: 'file' },
+        {
+          from: path.resolve(root, 'THIRD_PARTY_NOTICES.md'),
+          to: 'THIRD_PARTY_NOTICES.md',
+          toType: 'file',
+        },
+        {
+          from: path.resolve(root, 'src/assets/fonts/OFL.txt'),
+          to: 'DMSans-OFL.txt',
+          toType: 'file',
+        },
+      ],
     }),
   ],
   performance: { hints: false },

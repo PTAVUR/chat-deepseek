@@ -1,23 +1,32 @@
 import clsx from 'clsx'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslate } from '../../i18n/index.js'
-import { IconPanelLeftOutline16, IconSettingsOutline16, NewChatIcon } from '../base/icons.js'
+import {
+  IconEllipsisOutline16,
+  IconLogoutOutline16,
+  IconPanelLeftOutline16,
+  IconSettingsOutline16,
+  NewChatIcon,
+} from '../base/icons.js'
 import { setSiderCollapsed } from '../../services/settings.js'
 import { groupSessions } from '../../services/chat/sessionGroups.js'
 import { newChat, removeSession, useChatStore } from '../../services/chat/store.js'
+import { logout, type AuthUser } from '../../services/api/server.js'
 import type { SessionSummary } from '../../services/chat/types.js'
+import { Avatar } from '../base/Avatar.js'
 import { Button } from '../base/Button.js'
 import { IconButton } from '../base/IconButton.js'
+import { Menu } from '../base/Menu.js'
 import { Modal } from '../base/Modal.js'
+import { WhaleLogo } from '../base/WhaleLogo.js'
 import { showToast } from '../base/toastState.js'
 import { openSettings } from '../settings/settingsDialogState.js'
-import { logout } from '../../services/api/server.js'
 import { closeMobileSider, useMobileSider } from './mobileSiderState.js'
 import { SessionItem } from './SessionItem.js'
 import styles from './Sider.module.css'
 
-/** 展开的侧边栏：名称与收起按钮、开启新对话、按时间分组的会话列表、底部设置；移动端放在抽屉里，收起按钮关闭抽屉 */
-export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
+/** 展开的侧边栏：Logo 与收起按钮、开启新对话、按时间分组的会话列表、底部账户菜单；移动端放在抽屉里，收起按钮关闭抽屉 */
+export const Sider = ({ mobile = false, user }: { mobile?: boolean; user: AuthUser }) => {
   const t = useTranslate()
   const sessions = useChatStore((state) => state.sessions)
   const activeId = useChatStore((state) => state.activeId)
@@ -25,6 +34,11 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
   const groups = useMemo(() => groupSessions(sessions, now, t), [sessions, now, t])
   const [deleting, setDeleting] = useState<SessionSummary | null>(null)
   const [deletePending, setDeletePending] = useState(false)
+  const signOut = () => {
+    void logout()
+      .then(() => window.location.assign('/'))
+      .catch(() => showToast({ key: 'logoutFailed', type: 'error' }))
+  }
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>
@@ -53,7 +67,12 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
   return (
     <div className={clsx(styles.sider, mobile && styles.mobile)}>
       <div className={styles.top}>
-        <div className={styles.appName}>{t('appName')}</div>
+        <div className={styles.brand}>
+          <span className={styles.logo}>
+            <WhaleLogo size={26} />
+          </span>
+          <div className={styles.appName}>{t('appName')}</div>
+        </div>
         <IconButton
           size="m"
           icon={<IconPanelLeftOutline16 />}
@@ -93,23 +112,41 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
         </div>
       </div>
       <div className={styles.bottom}>
-        <button type="button" className={styles.settings} onClick={() => openSettings('general')}>
-          <span className={styles.settingsIcon}>
-            <IconSettingsOutline16 />
-          </span>
-          <span className={styles.settingsLabel}>{t('settings')}</span>
-        </button>
-        <button
-          type="button"
-          className={styles.logout}
-          onClick={() => {
-            void logout()
-              .then(() => window.location.assign('/'))
-              .catch(() => showToast({ key: 'logoutFailed', type: 'error' }))
-          }}
+        <Menu
+          anchorClassName={styles.userMenu}
+          options={[
+            {
+              key: 'settings',
+              label: t('settings'),
+              icon: <IconSettingsOutline16 />,
+              onSelect: () => openSettings('general'),
+            },
+            {
+              key: 'logout',
+              label: t('logout'),
+              icon: <IconLogoutOutline16 />,
+              danger: true,
+              onSelect: signOut,
+            },
+          ]}
         >
-          {t('logout')}
-        </button>
+          {({ open, toggle }) => (
+            <button
+              type="button"
+              className={clsx(styles.userButton, open && styles.userButtonOpen)}
+              title={user.username}
+              aria-haspopup="menu"
+              aria-expanded={open}
+              onClick={toggle}
+            >
+              <Avatar username={user.username} avatar={user.avatar} />
+              <span className={styles.userName}>{user.username}</span>
+              <span className={styles.more}>
+                <IconEllipsisOutline16 />
+              </span>
+            </button>
+          )}
+        </Menu>
       </div>
       {deleting ? (
         <Modal
@@ -153,7 +190,7 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
 }
 
 /** 移动端抽屉：浮在页面上方，点空白区域关闭。 */
-export const MobileSider = () => {
+export const MobileSider = ({ user }: { user: AuthUser }) => {
   const open = useMobileSider((state) => state.open)
   if (!open) {
     return null
@@ -162,7 +199,7 @@ export const MobileSider = () => {
     <>
       <div className={styles.drawerMask} onClick={closeMobileSider} />
       <div className={styles.drawer}>
-        <Sider mobile />
+        <Sider mobile user={user} />
       </div>
     </>
   )

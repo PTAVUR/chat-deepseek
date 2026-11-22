@@ -3,11 +3,11 @@ import { useRef, useState, type ReactNode } from 'react'
 import {
   IconDarkOutline16,
   IconDataOutline16,
-  IconDownloadOutline16,
   IconFollowsystemOutline16,
+  IconInfoOutline16,
   IconLightOutline16,
   IconSettingsOutline16,
-  IconUploadOutline14,
+  IconUserOutline16,
 } from '../base/icons.js'
 import {
   BackupError,
@@ -16,6 +16,7 @@ import {
   importHistory,
 } from '../../services/chat/backup.js'
 import { useIsMobile } from '../../app/viewport.js'
+import type { AuthUser } from '../../services/api/server.js'
 import { useChatStore } from '../../services/chat/store.js'
 import { regionCodes, getRegionName, provinces } from '../../services/location.js'
 import {
@@ -32,17 +33,23 @@ import { Button } from '../base/Button.js'
 import { Modal } from '../base/Modal.js'
 import { Select } from '../base/Select.js'
 import { showToast } from '../base/toastState.js'
+import { AccountSettings } from './AccountSettings.js'
+import { AboutSettings } from './AboutSettings.js'
 import { ApiKeyConfirm, ApiKeyField, useApiKeyEditor } from './ApiKeyField.js'
+import { SettingRow } from './SettingRow.js'
 import { closeSettings, useSettingsDialog, type SettingsSection } from './settingsDialogState.js'
 import styles from './Settings.module.css'
 
-/**
- * 设置弹窗：分「通用设置」（主题、语言、朗读音色、位置）与「数据管理」（API Key、导入、导出、删除）。
- * 桌面端为居中弹窗、左侧导航；移动端为底部弹层、导航横排在内容上方
- */
-export const SettingsDialog = () => {
+/** 设置弹窗：通用设置 / 账户管理 / 数据管理 / 关于。桌面端左右分栏，移动端导航横排。 */
+export const SettingsDialog = ({
+  user,
+  onUserChange,
+}: {
+  user: AuthUser
+  onUserChange: (user: AuthUser) => void
+}) => {
   const open = useSettingsDialog((state) => state.open)
-  return open ? <SettingsContent /> : null
+  return open ? <SettingsContent user={user} onUserChange={onUserChange} /> : null
 }
 
 const sections: { value: SettingsSection; label: TranslationKey; icon: ReactNode }[] = [
@@ -51,10 +58,22 @@ const sections: { value: SettingsSection; label: TranslationKey; icon: ReactNode
     label: 'settingDialogAsideGeneralOptionLabel',
     icon: <IconSettingsOutline16 />,
   },
+  {
+    value: 'account',
+    label: 'settingDialogAsideAccountOptionLabel',
+    icon: <IconUserOutline16 />,
+  },
   { value: 'data', label: 'settingDialogAsideDataOptionLabel', icon: <IconDataOutline16 /> },
+  { value: 'about', label: 'settingDialogAsideAboutOptionLabel', icon: <IconInfoOutline16 /> },
 ]
 
-const SettingsContent = () => {
+const SettingsContent = ({
+  user,
+  onUserChange,
+}: {
+  user: AuthUser
+  onUserChange: (user: AuthUser) => void
+}) => {
   const t = useTranslate()
   const isMobile = useIsMobile()
   // 打开时按调用方指定的分组选中，之后在弹窗内切换
@@ -72,13 +91,20 @@ const SettingsContent = () => {
         closable
         className={styles.dialog}
         mainClassName={styles.dialogMain}
+        headerClassName={styles.dialogHeader}
+        titleClassName={styles.dialogTitle}
         onClose={() => {
           if (!historyDelete.busy) {
             closeSettings()
           }
         }}
       >
-        <div role="tablist" className={styles.navigation}>
+        <div
+          role="tablist"
+          aria-label={t('settings')}
+          aria-orientation={isMobile ? 'horizontal' : 'vertical'}
+          className={styles.navigation}
+        >
           {sections.map((item) => (
             <button
               key={item.value}
@@ -101,14 +127,16 @@ const SettingsContent = () => {
               <TtsVoiceSetting />
               <LocationSetting />
             </>
-          ) : (
+          ) : section === 'account' ? (
+            <AccountSettings user={user} onUserChange={onUserChange} />
+          ) : section === 'data' ? (
             <>
               <ApiKeyField editor={apiKeyEditor} />
               <ImportHistory historyImport={historyImport} disabled={historyBusy} />
               <ExportHistory disabled={historyBusy} />
-              <SettingCell
+              <SettingRow
                 label={t('deleteAllSessions')}
-                status={null}
+                description={t('deleteAllSessionsDescription')}
                 action={
                   <Button
                     variant="dangerOutlined"
@@ -123,6 +151,8 @@ const SettingsContent = () => {
               />
               {isMobile ? <ApiKeyConfirm editor={apiKeyEditor} /> : null}
             </>
+          ) : (
+            <AboutSettings />
           )}
         </div>
       </Modal>
@@ -215,9 +245,8 @@ const LocationSetting = () => {
       : undefined
 
   return (
-    <SettingCell
+    <SettingRow
       label={t('settingsLocation')}
-      status={null}
       className={styles.locationCell}
       action={
         <div className={styles.locationSelectors}>
@@ -273,9 +302,8 @@ const LocaleSetting = () => {
   const t = useTranslate()
   const locale = useSettings((state) => state.locale)
   return (
-    <SettingCell
+    <SettingRow
       label={t('settingsLocalePreference')}
-      status={null}
       action={
         <Select
           ariaLabel={t('settingsLocalePreference')}
@@ -296,9 +324,8 @@ const TtsVoiceSetting = () => {
   const t = useTranslate()
   const ttsVoice = useSettings((state) => state.ttsVoice)
   return (
-    <SettingCell
+    <SettingRow
       label={t('settingsTtsVoice')}
-      status={null}
       action={
         <Select
           ariaLabel={t('settingsTtsVoice')}
@@ -360,41 +387,47 @@ const themeOptions: { value: ThemePreference; label: TranslationKey; icon: React
   },
 ]
 
-/**
- * 主题项：标题下方浅色 / 深色 / 跟随系统三个选块。
- * 与下方语言选项连续排列。
- */
+/** 主题：三段式选择，点击立即应用并保持弹窗打开。 */
 const ThemeSetting = () => {
   const t = useTranslate()
   const themePreference = useSettings((state) => state.themePreference)
   const label = t('avatarMenuSettingsDialogThemeItemLabel')
   return (
-    <div className={styles.theme}>
-      {label}
-      <div role="radiogroup" aria-label={label} className={styles.themeOptions}>
-        {themeOptions.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            role="radio"
-            aria-checked={themePreference === option.value}
-            className={clsx(
-              styles.themeOption,
-              themePreference === option.value && styles.themeOptionSelected
-            )}
-            onClick={() => setThemePreference(option.value)}
-          >
-            {option.icon}
-            {t(option.label)}
-          </button>
-        ))}
-      </div>
-    </div>
+    <SettingRow
+      label={label}
+      action={
+        <div role="radiogroup" aria-label={label} className={styles.segmented}>
+          {themeOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={themePreference === option.value}
+              className={clsx(
+                styles.segment,
+                themePreference === option.value && styles.segmentActive
+              )}
+              onClick={() => setThemePreference(option.value)}
+            >
+              {option.icon}
+              {t(option.label)}
+            </button>
+          ))}
+        </div>
+      }
+    />
   )
 }
 
 /** `reason` 为失败原因的文案 key，展示时按当前语言翻译后填入 `message` 参数。 */
 type Status = (TranslationMessage & { error?: boolean; reason?: TranslationKey }) | null
+
+type Translate = ReturnType<typeof useTranslate>
+
+const statusText = (t: Translate, status: Status): string | undefined =>
+  status ? t(status.key, status.reason ? { message: t(status.reason) } : status.params) : undefined
+
+const statusTone = (status: Status): 'error' | undefined => (status?.error ? 'error' : undefined)
 
 /** 导出失败附带原因：预期的错误用对应文案作原因，其他错误用错误信息。 */
 const errorStatus = (key: TranslationKey, error: unknown): Status => ({
@@ -404,37 +437,6 @@ const errorStatus = (key: TranslationKey, error: unknown): Status => ({
     : { params: { message: error instanceof Error ? error.message : String(error) } }),
   error: true,
 })
-
-const SettingCell = ({
-  label,
-  description,
-  status,
-  action,
-  className,
-}: {
-  label: string
-  description?: string
-  status: Status
-  action: ReactNode
-  className?: string
-}) => {
-  const t = useTranslate()
-  return (
-    <div className={clsx(styles.cell, styles.row, className)}>
-      <div className={styles.text}>
-        <div className={styles.label}>{label}</div>
-        {status || description ? (
-          <div className={clsx(styles.description, status?.error && styles.error)}>
-            {status
-              ? t(status.key, status.reason ? { message: t(status.reason) } : status.params)
-              : description}
-          </div>
-        ) : null}
-      </div>
-      {action}
-    </div>
-  )
-}
 
 /** 选文件后先提示覆盖；确认后才检查文件并执行导入，任何错误都提示导入失败。 */
 const useHistoryImport = () => {
@@ -477,20 +479,20 @@ const ImportHistory = ({
   const inputRef = useRef<HTMLInputElement>(null)
 
   return (
-    <SettingCell
+    <SettingRow
       label={t('historyImport')}
       description={t('historyImportDescription')}
-      status={historyImport.status}
+      status={statusText(t, historyImport.status)}
+      statusTone={statusTone(historyImport.status)}
       action={
         <>
           <Button
             variant="outlined"
             size="m"
-            className={clsx(styles.cellButton, styles.uploadButton)}
+            className={styles.cellButton}
             disabled={disabled}
             onClick={() => inputRef.current?.click()}
           >
-            <IconUploadOutline14 />
             {t('upload')}
           </Button>
           <input
@@ -538,10 +540,11 @@ const ExportHistory = ({ disabled }: { disabled: boolean }) => {
   }
 
   return (
-    <SettingCell
+    <SettingRow
       label={t('exportAllLabel')}
       description={t('historyExportDescription')}
-      status={status}
+      status={statusText(t, status)}
+      statusTone={statusTone(status)}
       action={
         <Button
           variant="outlined"
@@ -550,7 +553,6 @@ const ExportHistory = ({ disabled }: { disabled: boolean }) => {
           disabled={disabled || busy || empty}
           onClick={() => void onExport()}
         >
-          <IconDownloadOutline16 />
           {t('exportAllDownload')}
         </Button>
       }

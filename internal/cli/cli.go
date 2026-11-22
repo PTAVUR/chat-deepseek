@@ -40,6 +40,8 @@ func Run(args []string) error {
 		return runServe(args[1:])
 	case "user":
 		return runUser(args[1:])
+	case "backup":
+		return runBackup(args[1:])
 	case "version", "--version", "-v":
 		fmt.Printf("chat-deepseek %s %s/%s\n", buildinfo.Version, runtime.GOOS, runtime.GOARCH)
 		return nil
@@ -58,6 +60,7 @@ func printUsage() {
   chat-deepseek                 首次运行 setup，之后启动服务并打开浏览器
   chat-deepseek setup           创建第一个 Owner
   chat-deepseek serve           启动 HTTP 服务
+  chat-deepseek backup          停止服务后把 data/ 打包成 ZIP
   chat-deepseek user ...        管理账户/组（仅服务端 CLI）
   chat-deepseek version         版本信息
 
@@ -66,6 +69,7 @@ func printUsage() {
   --listen <addr>               监听地址，默认 127.0.0.1:8090
   --api-origin <url>            DeepSeek API 地址，默认 https://api.deepseek.com
   --no-browser                  不自动打开浏览器（serve）
+  --output <file>               备份输出路径（backup）
   --password-stdin              从标准输入读取密码（setup/user add/user reset-password）
 
 首次使用：
@@ -138,7 +142,7 @@ func runSetup(args []string) error {
 		}
 	}
 	if err := account.ValidateUsername(name); err != nil {
-		return fmt.Errorf("用户名需为 3-64 个字母、数字或 . _ -: %w", err)
+		return fmt.Errorf("用户名需为 1-64 个字母、数字或 . _ -: %w", err)
 	}
 	password, err := readNewPassword(*passwordStdin)
 	if err != nil {

@@ -2,9 +2,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,6 +87,14 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/v1/auth/password",
 		s.withAuth(s.withCSRF(http.HandlerFunc(s.handlePassword))),
 	)
+	mux.Handle(
+		"PUT /api/v1/auth/username",
+		s.withAuth(s.withCSRF(http.HandlerFunc(s.handleUsername))),
+	)
+	mux.Handle(
+		"PUT /api/v1/auth/avatar",
+		s.withAuth(s.withCSRF(http.HandlerFunc(s.handleAvatar))),
+	)
 	mux.Handle("GET /api/v1/settings", s.withAuth(http.HandlerFunc(s.handleGetSettings)))
 	mux.Handle("PUT /api/v1/settings", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleUpdateSettings))))
 	mux.Handle(
@@ -101,17 +111,10 @@ func (s *Server) Handler() http.Handler {
 	)
 	mux.Handle("GET /api/v1/chats", s.withAuth(http.HandlerFunc(s.handleListChats)))
 	mux.Handle("POST /api/v1/chats", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleCreateChat))))
+	mux.Handle("POST /api/v1/import", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleImport))))
 	mux.Handle("GET /api/v1/chats/{id}", s.withAuth(http.HandlerFunc(s.handleGetChat)))
 	mux.Handle("PUT /api/v1/chats/{id}", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleUpdateChat))))
 	mux.Handle("DELETE /api/v1/chats/{id}", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleDeleteChat))))
-	mux.Handle(
-		"POST /api/v1/chats/{id}/restore",
-		s.withAuth(s.withCSRF(http.HandlerFunc(s.handleRestoreChat))),
-	)
-	mux.Handle(
-		"DELETE /api/v1/chats/{id}/purge",
-		s.withAuth(s.withCSRF(http.HandlerFunc(s.handlePurgeChat))),
-	)
 	mux.Handle("POST /api/v1/files", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleUploadFile))))
 	mux.Handle(
 		"DELETE /api/v1/files",
@@ -159,8 +162,8 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = fmt.Fprintf(w, `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>chat-deepseek</title></head>
-<body><h1>chat-deepseek</h1><p>服务端已启动，版本 %s。</p>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Deepseek</title></head>
+<body><h1>Deepseek</h1><p>服务端已启动，版本 %s。</p>
 <p>Web UI 尚未构建；先运行 pnpm build 并复制 dist 到 internal/webui/dist 后重新编译。</p></body></html>`,
 		buildinfo.Version,
 	)
@@ -174,6 +177,7 @@ type loginRequest struct {
 type userJSON struct {
 	ID        string   `json:"id"`
 	Username  string   `json:"username"`
+	Avatar    string   `json:"avatar"`
 	Groups    []string `json:"groups"`
 	Disabled  bool     `json:"disabled"`
 	CreatedAt int64    `json:"createdAt"`
@@ -339,6 +343,118 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type usernameRequest struct {
+	Username string `json:"username"`
+}
+
+func (s *Server) handleUsername(w http.ResponseWriter, r *http.Request) {
+	var request usernameRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "请求格式不正确")
+		return
+	}
+	username := strings.TrimSpace(request.Username)
+	if err := account.ValidateUsername(username); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_username", "用户名需为 1-64 个字母、数字或 . _ -")
+		return
+	}
+	user := userFromContext(r.Context())
+	if username == user.Username {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := s.accounts.SetUsername(r.Context(), user.ID, username); err != nil {
+		switch {
+		case errors.Is(err, account.ErrUsernameTaken):
+			writeAPIError(w, http.StatusConflict, "username_taken", "用户名已被占用")
+		case errors.Is(err, account.ErrInvalidUser):
+			writeAPIError(w, http.StatusBadRequest, "invalid_username", "用户名需为 1-64 个字母、数字或 . _ -")
+		case errors.Is(err, account.ErrUserNotFound):
+			writeAPIError(w, http.StatusNotFound, "user_not_found", "账户不存在")
+		default:
+			s.logger.Error("update username failed", "error", err)
+			writeAPIError(w, http.StatusInternalServerError, "internal_error", "修改用户名失败")
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type avatarRequest struct {
+	Avatar string `json:"avatar"`
+}
+
+const (
+	maxAvatarBytes   = 256 << 10
+	maxAvatarDataURL = 512 << 10
+)
+
+// validateAvatar 只接受前端压缩后的 PNG/JPEG/WebP data URL，并校验文件头。
+func validateAvatar(avatar string) (valid bool, tooLarge bool) {
+	if avatar == "" {
+		return true, false
+	}
+	if len(avatar) > maxAvatarDataURL {
+		return false, true
+	}
+	var mime string
+	var payload string
+	switch {
+	case strings.HasPrefix(avatar, "data:image/png;base64,"):
+		mime = "png"
+		payload = strings.TrimPrefix(avatar, "data:image/png;base64,")
+	case strings.HasPrefix(avatar, "data:image/jpeg;base64,"):
+		mime = "jpeg"
+		payload = strings.TrimPrefix(avatar, "data:image/jpeg;base64,")
+	case strings.HasPrefix(avatar, "data:image/webp;base64,"):
+		mime = "webp"
+		payload = strings.TrimPrefix(avatar, "data:image/webp;base64,")
+	default:
+		return false, false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil || len(decoded) == 0 {
+		return false, false
+	}
+	if len(decoded) > maxAvatarBytes {
+		return false, true
+	}
+	switch mime {
+	case "png":
+		return bytes.HasPrefix(decoded, []byte("\x89PNG\r\n\x1a\n")), false
+	case "jpeg":
+		return bytes.HasPrefix(decoded, []byte{0xff, 0xd8, 0xff}), false
+	case "webp":
+		return len(decoded) >= 12 && string(decoded[:4]) == "RIFF" && string(decoded[8:12]) == "WEBP", false
+	default:
+		return false, false
+	}
+}
+
+func (s *Server) handleAvatar(w http.ResponseWriter, r *http.Request) {
+	var request avatarRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "请求格式不正确")
+		return
+	}
+	valid, tooLarge := validateAvatar(request.Avatar)
+	if !valid {
+		if tooLarge {
+			writeAPIError(w, http.StatusRequestEntityTooLarge, "avatar_too_large", "头像文件过大")
+		} else {
+			writeAPIError(w, http.StatusBadRequest, "invalid_avatar", "头像格式不正确")
+		}
+		return
+	}
+	user := userFromContext(r.Context())
+	if err := s.accounts.SetAvatar(r.Context(), user.ID, request.Avatar); err != nil {
+		s.logger.Error("update avatar failed", "error", err)
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "修改头像失败")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func toUserJSON(user *account.User) userJSON {
 	groups := make([]string, 0, len(user.Groups))
 	for _, group := range user.Groups {
@@ -347,6 +463,7 @@ func toUserJSON(user *account.User) userJSON {
 	return userJSON{
 		ID:        user.ID,
 		Username:  user.Username,
+		Avatar:    user.Avatar,
 		Groups:    groups,
 		Disabled:  user.Disabled,
 		CreatedAt: user.CreatedAt,

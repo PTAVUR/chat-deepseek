@@ -1,5 +1,6 @@
-import { ApiError, request, uploadFile } from '../api/client.js'
+import { ApiError, deleteFile, request, uploadFile } from '../api/client.js'
 import type { FilePurpose } from '../api/types.js'
+import { createId } from '../../utils/id.js'
 import { toSessionSummary, type Session, type SessionSummary } from './types.js'
 
 /** 文件原件由服务端保存；这个类型保留给历史导入/导出代码做参数标注。 */
@@ -123,7 +124,14 @@ export const renameSession = async (id: string, title: string): Promise<void> =>
 
 export const deleteSession = async (sessionId: string): Promise<void> => {
   await enqueue(sessionId, async () => {
-    await request(`${API}/chats/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+    try {
+      // 会话删除是永久的；服务端会同时清理该会话独占的附件。
+      await request(`${API}/chats/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) {
+        throw error
+      }
+    }
     versions.delete(sessionId)
   })
 }
@@ -188,44 +196,29 @@ const purposeFor = (name: string, isImage: boolean): FilePurpose | null => {
 }
 
 const allChatIDs = async (): Promise<string[]> => {
-  const ids = new Set<string>()
-  for (const deleted of [false, true]) {
-    const response = await request(`${API}/chats${deleted ? '?deleted=true' : ''}`, {
-      method: 'GET',
-    })
-    const body = await readJSON<{ chats: SessionSummary[] }>(response)
-    for (const chat of body.chats) {
-      ids.add(chat.id)
-    }
-  }
-  return [...ids]
+  const response = await request(`${API}/chats`, { method: 'GET' })
+  const body = await readJSON<{ chats: SessionSummary[] }>(response)
+  return body.chats.map((chat) => chat.id)
 }
 
-/** 清空当前账户的全部会话；先软删再永久删除，避免导入的相同 ID 与旧记录冲突。 */
+/** 清空当前账户的全部会话与附件；先逐个永久删除，再清掉草稿等未引用文件。 */
 const clearAllChats = async () => {
   for (const id of await allChatIDs()) {
-    try {
-      await deleteSession(id)
-    } catch (error) {
-      if (!(error instanceof ApiError) || error.status !== 404) {
-        throw error
-      }
-    }
-    await request(`${API}/chats/${encodeURIComponent(id)}/purge`, { method: 'DELETE' })
+    await deleteSession(id)
   }
   await request(`${API}/files`, { method: 'DELETE' })
 }
 
 /**
- * 用暂存替换正式数据。v1 先逐条上传附件、创建会话；失败时已经写入的会话保留，
- * 真正的服务端事务/备份恢复在后续版本补齐。
+ * 用暂存原子替换正式数据：先给导入附件换新 ID 并上传，再让服务端在一个事务里替换全部会话。
+ * 上传或导入失败时只清理新上传的文件，旧会话和旧附件保持不变。
  */
 export const commitStaging = async (): Promise<SessionSummary[]> => {
   if (stagedSessions.size === 0) {
     await clearAllChats()
     return []
   }
-  await clearAllChats()
+  remapStagedIDs()
   const metadata = new Map<string, { name: string; isImage: boolean }>()
   for (const session of stagedSessions.values()) {
     for (const message of session.messages) {
@@ -236,22 +229,66 @@ export const commitStaging = async (): Promise<SessionSummary[]> => {
       }
     }
   }
-  for (const [id, stored] of stagedFiles) {
-    const info = metadata.get(id) ?? { name: id, isImage: false }
-    await uploadFile(
-      new File([stored.blob], info.name, { type: stored.blob.type }),
-      purposeFor(info.name, info.isImage),
-      info.isImage,
-      id
-    )
+  const uploaded: string[] = []
+  try {
+    for (const [id, stored] of stagedFiles) {
+      const info = metadata.get(id) ?? { name: id, isImage: false }
+      uploaded.push(id)
+      await uploadFile(
+        new File([stored.blob], info.name, { type: stored.blob.type }),
+        purposeFor(info.name, info.isImage),
+        info.isImage,
+        id
+      )
+    }
+    await request(`${API}/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessions: [...stagedSessions.values()] }),
+    })
+  } catch (error) {
+    await Promise.all(uploaded.map((id) => deleteFile(id).catch(() => undefined)))
+    throw error
   }
   const summaries: SessionSummary[] = []
   for (const session of stagedSessions.values()) {
-    versions.delete(session.id)
-    await enqueue(session.id, () => createChat(session))
+    // 服务端导入后版本固定从 1 开始，直接记录可避免第一次保存先撞 409。
+    versions.set(session.id, 1)
     summaries.push(toSessionSummary(session))
   }
   return summaries
+}
+
+/**
+ * 导入文件使用新 ID，避免覆盖服务端已有附件；失败回滚时旧文件仍可用。
+ * 没有原件的附件也换 ID，避免新会话误引用旧文件。
+ */
+const remapStagedIDs = () => {
+  const ids = new Map<string, string>()
+  for (const id of stagedFiles.keys()) {
+    ids.set(id, createId())
+  }
+  const remap = (id: string) => {
+    let next = ids.get(id)
+    if (!next) {
+      next = createId()
+      ids.set(id, next)
+    }
+    return next
+  }
+  for (const session of stagedSessions.values()) {
+    for (const message of session.messages) {
+      if (message.role !== 'user') {
+        continue
+      }
+      for (const file of message.files) {
+        file.id = remap(file.id)
+        file.serverId = null
+        file.imageSizeChecked = false
+      }
+    }
+  }
+  stagedFiles = new Map([...stagedFiles].map(([id, stored]) => [remap(id), stored] as const))
 }
 
 /** 服务端错误无法像 IndexedDB 那样在本地兜底，保留统一日志出口方便组件复用。 */

@@ -161,7 +161,7 @@ export const uploadFile = async (
   return (await response.json()) as FileObject
 }
 
-/** 删除服务端附件；当前聊天删除不调用，保留给回收站/清理功能。 */
+/** 删除服务端附件（元数据与磁盘原件）；用于移除尚未发送的草稿附件。 */
 export const deleteFile = async (fileId: string): Promise<void> => {
   await request(`/api/v1/files/${encodeURIComponent(fileId)}`, { method: 'DELETE' })
 }

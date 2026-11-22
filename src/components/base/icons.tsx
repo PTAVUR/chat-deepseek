@@ -523,3 +523,57 @@ export const IconToastError16 = () => (
     />
   </svg>
 )
+
+/** 退出登录：门框 + 向右箭头，颜色跟随 currentColor。 */
+export const IconLogoutOutline16 = () => (
+  <svg
+    width={16}
+    height={16}
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.4}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path d="M6.5 2.5H3.75A1.25 1.25 0 0 0 2.5 3.75v8.5A1.25 1.25 0 0 0 3.75 13.5H6.5" />
+    <path d="m10 5 3 3-3 3M13 8H6" />
+  </svg>
+)
+
+/** 账户头像入口：人像轮廓。 */
+export const IconUserOutline16 = () => (
+  <svg
+    width={16}
+    height={16}
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.4}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <circle cx="8" cy="5.25" r="2.5" />
+    <path d="M3 13.5c0-2.3 2.2-3.75 5-3.75s5 1.45 5 3.75" />
+  </svg>
+)
+
+/** 关于页：圆圈内感叹号。 */
+export const IconInfoOutline16 = () => (
+  <svg
+    width={16}
+    height={16}
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.4}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <circle cx="8" cy="8" r="6" />
+    <path d="M8 7.25v4M8 4.65v.1" />
+  </svg>
+)

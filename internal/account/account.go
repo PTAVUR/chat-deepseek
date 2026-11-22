@@ -57,6 +57,7 @@ func (g Group) Rank() int {
 type User struct {
 	ID        string  `json:"id"`
 	Username  string  `json:"username"`
+	Avatar    string  `json:"avatar"`
 	Groups    []Group `json:"-"`
 	Disabled  bool    `json:"disabled"`
 	CreatedAt int64   `json:"createdAt"`
@@ -189,9 +190,9 @@ func (s *Store) getOne(ctx context.Context, where string, arg any) (*User, error
 	var disabled int
 	err := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, username, disabled, created_at, updated_at FROM users `+where,
+		`SELECT id, username, avatar, disabled, created_at, updated_at FROM users `+where,
 		arg,
-	).Scan(&user.ID, &user.Username, &disabled, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Username, &user.Avatar, &disabled, &user.CreatedAt, &user.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUserNotFound
 	}
@@ -211,7 +212,7 @@ func (s *Store) getOne(ctx context.Context, where string, arg any) (*User, error
 func (s *Store) List(ctx context.Context) ([]*User, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT id, username, disabled, created_at, updated_at FROM users ORDER BY username COLLATE NOCASE`,
+		`SELECT id, username, avatar, disabled, created_at, updated_at FROM users ORDER BY username COLLATE NOCASE`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
@@ -222,7 +223,7 @@ func (s *Store) List(ctx context.Context) ([]*User, error) {
 	for rows.Next() {
 		var user User
 		var disabled int
-		if err := rows.Scan(&user.ID, &user.Username, &disabled, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Username, &user.Avatar, &disabled, &user.CreatedAt, &user.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		user.Disabled = disabled != 0
@@ -298,6 +299,43 @@ func (s *Store) SetPassword(ctx context.Context, userID, passwordHash string) er
 	)
 	if err != nil {
 		return fmt.Errorf("update password: %w", err)
+	}
+	return requireAffected(result, ErrUserNotFound)
+}
+
+// SetUsername 修改用户名；唯一约束冲突返回 ErrUsernameTaken。
+func (s *Store) SetUsername(ctx context.Context, userID, username string) error {
+	username = strings.TrimSpace(username)
+	if err := ValidateUsername(username); err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(
+		ctx,
+		`UPDATE users SET username = ?, updated_at = ? WHERE id = ?`,
+		username,
+		time.Now().UnixMilli(),
+		userID,
+	)
+	if err != nil {
+		if isUniqueUsername(err) {
+			return ErrUsernameTaken
+		}
+		return fmt.Errorf("update username: %w", err)
+	}
+	return requireAffected(result, ErrUserNotFound)
+}
+
+// SetAvatar 保存 data URL 头像；空字符串表示恢复用户名首字母。
+func (s *Store) SetAvatar(ctx context.Context, userID, avatar string) error {
+	result, err := s.db.ExecContext(
+		ctx,
+		`UPDATE users SET avatar = ?, updated_at = ? WHERE id = ?`,
+		avatar,
+		time.Now().UnixMilli(),
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("update avatar: %w", err)
 	}
 	return requireAffected(result, ErrUserNotFound)
 }
@@ -468,9 +506,9 @@ func (s *Store) CountActiveOwners(ctx context.Context) (int, error) {
 	return count, nil
 }
 
-// ValidateUsername 校验用户名：3-64 个 ASCII 字母、数字或 . _ -。
+// ValidateUsername 校验用户名：1-64 个 ASCII 字母、数字或 . _ -。
 func ValidateUsername(username string) error {
-	if len(username) < 3 || len(username) > 64 {
+	if len(username) == 0 || len(username) > 64 {
 		return ErrInvalidUser
 	}
 	for _, char := range username {

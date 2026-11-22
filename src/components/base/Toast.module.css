@@ -28,6 +28,7 @@
 /* 带图标时图标在左、文字左对齐，整体仍居中 */
 .error {
   display: flex;
+  color: var(--dsw-alias-state-error-primary);
   text-align: left;
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslate } from '../i18n/index.js'
-import { getMe } from '../services/api/server.js'
+import { getMe, type AuthUser } from '../services/api/server.js'
 import { onUnauthorized } from '../services/api/client.js'
 import { loadSettings } from '../services/settings.js'
 import { LoginView } from '../components/auth/LoginView.js'
@@ -14,6 +14,7 @@ type Phase = 'loading' | 'login' | 'ready' | 'error'
 export const Root = () => {
   const t = useTranslate()
   const [phase, setPhase] = useState<Phase>('loading')
+  const [user, setUser] = useState<AuthUser | null>(null)
   const [attempt, setAttempt] = useState(0)
 
   // 会话在使用过程中失效时整页重载，回到登录页并清空上一账户的内存数据。
@@ -28,6 +29,7 @@ export const Root = () => {
   useEffect(() => {
     let active = true
     setPhase('loading')
+    setUser(null)
     void (async () => {
       try {
         const me = await getMe()
@@ -38,6 +40,7 @@ export const Root = () => {
           setPhase('login')
           return
         }
+        setUser(me.user)
         await loadSettings()
         if (active) {
           setPhase('ready')
@@ -53,8 +56,8 @@ export const Root = () => {
     }
   }, [attempt])
 
-  if (phase === 'ready') {
-    return <App />
+  if (phase === 'ready' && user) {
+    return <App user={user} onUserChange={setUser} />
   }
   if (phase === 'login') {
     return <LoginView />

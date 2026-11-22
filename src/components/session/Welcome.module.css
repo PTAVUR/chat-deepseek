@@ -20,12 +20,23 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 16px;
   margin-bottom: 21px;
   font-size: 24px;
   line-height: 32px;
   font-weight: 600;
   text-align: center;
   color: var(--dsw-alias-label-primary);
+}
+
+.whale {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--dsw-alias-brand-primary);
+}
+
+.greetingText {
+  min-width: 0;
 }
 
 @media (max-width: 439px) {
@@ -52,7 +63,13 @@
 
   .greeting {
     flex-shrink: 0;
+    gap: 12px;
     margin: auto 0;
+  }
+
+  .whale svg {
+    width: 48px;
+    height: 48px;
   }
 
   .caveat {

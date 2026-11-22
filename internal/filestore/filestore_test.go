@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -95,6 +96,19 @@ func TestCreateOpenSetServerIDDelete(t *testing.T) {
 	if _, _, err := store.Open(ctx, userID, file.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("open deleted error = %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(store.root, userID, file.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("file still on disk: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(store.root, userID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty user directory still exists: %v", err)
+	}
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM files WHERE id = ?`, file.ID).Scan(&count); err != nil {
+		t.Fatalf("count deleted metadata: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("metadata rows = %d", count)
+	}
 	if err := store.Delete(ctx, userID, file.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("delete twice error = %v", err)
 	}
@@ -176,6 +190,25 @@ func TestExplicitIDIsIdempotentAndScoped(t *testing.T) {
 	}
 }
 
+func TestNewStoreRemovesEmptyUserDirectories(t *testing.T) {
+	dir := t.TempDir()
+	userDir := filepath.Join(dir, "files", "empty-user")
+	if err := os.MkdirAll(userDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	db, err := database.Open(dir)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := NewStore(db, dir); err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if _, err := os.Stat(userDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty user directory still exists: %v", err)
+	}
+}
+
 func TestDeleteAll(t *testing.T) {
 	store, userID, _ := newTestStore(t)
 	ctx := context.Background()
@@ -191,5 +224,15 @@ func TestDeleteAll(t *testing.T) {
 		if _, err := store.Get(ctx, userID, id); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("get %s error = %v", id, err)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(store.root, userID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("user files directory still exists: %v", err)
+	}
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM files WHERE user_id = ?`, userID).Scan(&count); err != nil {
+		t.Fatalf("count deleted metadata: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("metadata rows = %d", count)
 	}
 }

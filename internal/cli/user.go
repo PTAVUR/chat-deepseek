@@ -76,6 +76,9 @@ func runUserAdd(args []string) error {
 		return errors.New("用法：chat-deepseek user add [--group Admin] <username>")
 	}
 	username := fs.Arg(0)
+	if err := account.ValidateUsername(username); err != nil {
+		return fmt.Errorf("用户名需为 1-64 个字母、数字或 . _ -: %w", err)
+	}
 	password, err := readNewPassword(*passwordStdin)
 	if err != nil {
 		return err

@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
+	"time"
 
 	"gitlab.com/elegantgx/chat-deepseek/internal/chat"
+	"gitlab.com/elegantgx/chat-deepseek/internal/filestore"
 )
 
 type chatListResponse struct {
@@ -28,17 +30,8 @@ type updateChatRequest struct {
 }
 
 func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
-	deleted := false
-	if value := r.URL.Query().Get("deleted"); value != "" {
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid_request", "deleted 参数不正确")
-			return
-		}
-		deleted = parsed
-	}
 	user := userFromContext(r.Context())
-	summaries, err := s.chats.List(r.Context(), user.ID, deleted)
+	summaries, err := s.chats.List(r.Context(), user.ID)
 	if err != nil {
 		s.writeChatError(w, err)
 		return
@@ -96,29 +89,37 @@ func (s *Server) handleUpdateChat(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteChat(w http.ResponseWriter, r *http.Request) {
 	user := userFromContext(r.Context())
-	if err := s.chats.SoftDelete(r.Context(), user.ID, r.PathValue("id")); err != nil {
+	fileIDs, err := s.chats.Delete(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
 		s.writeChatError(w, err)
 		return
 	}
+	// 会话已经删除；附件清理失败只留日志，避免客户端收到失败后重试却只得到 404。
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+	defer cancel()
+	s.cleanupAttachments(ctx, user.ID, fileIDs)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleRestoreChat(w http.ResponseWriter, r *http.Request) {
-	user := userFromContext(r.Context())
-	if err := s.chats.Restore(r.Context(), user.ID, r.PathValue("id")); err != nil {
-		s.writeChatError(w, err)
+// cleanupAttachments 删除不再被任何会话引用的附件；被其他会话共用的原件保留。
+func (s *Server) cleanupAttachments(ctx context.Context, userID string, fileIDs []string) {
+	if len(fileIDs) == 0 || s.files == nil {
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) handlePurgeChat(w http.ResponseWriter, r *http.Request) {
-	user := userFromContext(r.Context())
-	if err := s.chats.Purge(r.Context(), user.ID, r.PathValue("id")); err != nil {
-		s.writeChatError(w, err)
+	referenced, err := s.chats.ReferencedFileIDs(ctx, userID)
+	if err != nil {
+		s.logger.Error("list referenced attachments failed", "error", err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	for _, fileID := range fileIDs {
+		if _, ok := referenced[fileID]; ok {
+			continue
+		}
+		if err := s.files.Delete(ctx, userID, fileID); err != nil &&
+			!errors.Is(err, filestore.ErrNotFound) {
+			s.logger.Error("delete attachment failed", "file_id", fileID, "error", err)
+		}
+	}
 }
 
 func (s *Server) writeChatError(w http.ResponseWriter, err error) {

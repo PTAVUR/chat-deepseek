@@ -42,6 +42,21 @@ func sessionJSON(id, title string) []byte {
 	return data
 }
 
+func sessionWithFiles(id string, fileIDs ...string) []byte {
+	files := make([]any, 0, len(fileIDs))
+	for _, fileID := range fileIDs {
+		files = append(files, map[string]any{"id": fileID})
+	}
+	data, _ := json.Marshal(map[string]any{
+		"id":    id,
+		"title": id,
+		"messages": []any{
+			map[string]any{"role": "user", "content": "hi", "files": files},
+		},
+	})
+	return data
+}
+
 func TestCreateGetListUpdate(t *testing.T) {
 	store, _, userID, otherID := newTestStore(t)
 	ctx := context.Background()
@@ -64,7 +79,7 @@ func TestCreateGetListUpdate(t *testing.T) {
 		t.Fatalf("other user get error = %v", err)
 	}
 
-	summaries, err := store.List(ctx, userID, false)
+	summaries, err := store.List(ctx, userID)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -91,54 +106,35 @@ func TestCreateGetListUpdate(t *testing.T) {
 	}
 }
 
-func TestSoftDeleteRestorePurge(t *testing.T) {
+func TestDeleteReturnsFileReferences(t *testing.T) {
 	store, _, userID, _ := newTestStore(t)
 	ctx := context.Background()
-	if _, err := store.Create(ctx, userID, sessionJSON("session-1", "Hello")); err != nil {
-		t.Fatalf("create: %v", err)
+	if _, err := store.Create(ctx, userID, sessionWithFiles("session-a", "file-1", "file-2")); err != nil {
+		t.Fatalf("create a: %v", err)
 	}
-	if err := store.SoftDelete(ctx, userID, "session-1"); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
-	if _, err := store.Get(ctx, userID, "session-1"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("get deleted error = %v", err)
-	}
-	active, err := store.List(ctx, userID, false)
-	if err != nil {
-		t.Fatalf("list active: %v", err)
-	}
-	if len(active) != 0 {
-		t.Fatalf("active = %+v", active)
-	}
-	deleted, err := store.List(ctx, userID, true)
-	if err != nil {
-		t.Fatalf("list deleted: %v", err)
-	}
-	if len(deleted) != 1 || deleted[0].ID != "session-1" {
-		t.Fatalf("deleted = %+v", deleted)
-	}
-	if err := store.SoftDelete(ctx, userID, "session-1"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("delete twice error = %v", err)
+	if _, err := store.Create(ctx, userID, sessionWithFiles("session-b", "file-2", "file-3")); err != nil {
+		t.Fatalf("create b: %v", err)
 	}
 
-	if err := store.Restore(ctx, userID, "session-1"); err != nil {
-		t.Fatalf("restore: %v", err)
+	fileIDs, err := store.Delete(ctx, userID, "session-a")
+	if err != nil {
+		t.Fatalf("delete a: %v", err)
 	}
-	if _, err := store.Get(ctx, userID, "session-1"); err != nil {
-		t.Fatalf("get restored: %v", err)
+	if len(fileIDs) != 2 || fileIDs[0] == fileIDs[1] {
+		t.Fatalf("deleted file ids = %v", fileIDs)
 	}
-
-	if err := store.SoftDelete(ctx, userID, "session-1"); err != nil {
-		t.Fatalf("delete again: %v", err)
+	referenced, err := store.ReferencedFileIDs(ctx, userID)
+	if err != nil {
+		t.Fatalf("references: %v", err)
 	}
-	if err := store.Purge(ctx, userID, "session-1"); err != nil {
-		t.Fatalf("purge: %v", err)
+	if _, ok := referenced["file-2"]; !ok {
+		t.Fatalf("references = %v, want file-2 kept", referenced)
 	}
-	if err := store.Restore(ctx, userID, "session-1"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("restore purged error = %v", err)
+	if _, ok := referenced["file-1"]; ok {
+		t.Fatalf("references = %v, file-1 should be gone", referenced)
 	}
-	if _, err := store.Get(ctx, userID, "session-1"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("get purged error = %v", err)
+	if _, err := store.Delete(ctx, userID, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete missing error = %v", err)
 	}
 }
 

@@ -15,7 +15,7 @@ import (
 )
 
 // schemaVersion 是当前数据库结构版本；每次改表都必须递增。
-const schemaVersion = 2
+const schemaVersion = 4
 
 // Open 打开数据目录下的 chat.db，启用 WAL/外键并执行迁移。
 func Open(dataDir string) (*sql.DB, error) {
@@ -96,6 +96,8 @@ type migration struct {
 var migrations = []migration{
 	{version: 1, sql: schemaV1},
 	{version: 2, sql: schemaV2},
+	{version: 3, sql: schemaV3},
+	{version: 4, sql: schemaV4},
 }
 
 const schemaV1 = `
@@ -192,6 +194,20 @@ CREATE INDEX idx_generation_leases_expires ON generation_leases(expires_at);
 const schemaV2 = `
 ALTER TABLE files ADD COLUMN purpose TEXT NOT NULL DEFAULT '';
 CREATE INDEX idx_files_user_created ON files(user_id, created_at DESC);
+`
+
+// schemaV3 保存用户头像。头像是前端压缩后的 data URL，空字符串表示使用用户名首字母。
+const schemaV3 = `
+ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT '';
+`
+
+// schemaV4 移除回收站和未启用的生成租约：删除是永久的，不再保留 deleted_at。
+const schemaV4 = `
+DELETE FROM chats WHERE deleted_at IS NOT NULL;
+DELETE FROM files WHERE deleted_at IS NOT NULL;
+DROP TABLE generation_leases;
+ALTER TABLE chats DROP COLUMN deleted_at;
+ALTER TABLE files DROP COLUMN deleted_at;
 `
 
 // ErrNotFound 用于调用方区分“没有数据”和真实错误。

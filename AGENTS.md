@@ -16,13 +16,13 @@
 
 ## 2. 当前状态（2026-11-23 核验）
 
-- 改造状态：v1 主链路可用。Go 服务端具备账户/组、登录/CSRF、设置与 API Key 加密、会话版本锁/软删除、附件存储、DeepSeek Files/SSE/ASR/TTS 代理和 Web UI 嵌入；前端已登录门、设置、会话、附件全部走 `/api/v1`，localStorage/IndexedDB 已移除。
+- 改造状态：v1 主链路可用。Go 服务端具备账户/组、登录/CSRF、设置与 API Key 加密、会话版本锁/永久删除、附件存储、DeepSeek Files/SSE/ASR/TTS 代理和 Web UI 嵌入；前端已登录门、设置、会话、附件全部走 `/api/v1`，localStorage/IndexedDB 已移除。
 - Git：当前在 `feature/dev`；`main` 跟踪 `upstream/main`，`feature/dev` 跟踪 `origin/feature/dev`；`AGENTS.md` 提交在 feature 分支。
 - `pnpm type`：通过。
-- `pnpm lint`：通过，`0 warnings and 0 errors`（约 125 个文件）。
+- `pnpm lint`：通过，`0 warnings and 0 errors`（约 131 个文件）。
 - `pnpm build`：通过，生成 `dist/` 并复制到 `internal/webui/dist/` 供 `go:embed`。
-- 测试：Go 单元/接口测试覆盖 auth、account、database、config、secret、settings、chat、filestore、deepseek、server；`go test ./...` 通过。前端没有自动化测试。
-- 手动端到端：已用临时数据目录 + dev 代理走通登录、退出、设置/API Key、会话创建/加载/刷新持久化、附件上传和 SSE mock 回复。
+- 测试：Go 单元/接口测试覆盖 auth、account、database、config、secret、settings、chat、filestore、backup、deepseek、server；`go test ./...` 通过。前端没有自动化测试。
+- 手动端到端：已用临时数据目录 + dev 代理走通登录、退出、设置/API Key、会话创建/加载/刷新持久化、附件上传和 SSE mock 回复；侧边栏 Logo、头像菜单、Deepseek 标题与 favicon 已在无头 Chrome 验证（桌面与移动端），登录页深色样式、DM Sans 字标和首页鲸鱼也已核对；系统设置已按官方左右分栏与行式列表重做，账户资料保存后就地更新且不关闭弹窗；桌面与移动端均已在无头 Chrome 核对；删除会话、清空全部会话和移除草稿附件后，`files` 表、磁盘原件和空用户目录均已核对清理；会话菜单在鼠标离开触发按钮后仍保持贴靠；历史导出后重新导入会重映射附件 ID 并原子替换会话；`backup` 在服务运行时拒绝、停止后生成 ZIP。
 - 代码规模：`src` 约 19k 行；最大文件是 `src/services/chat/store.ts`（约 1.1k 行）。
 - 源码中没有 `TODO` / `FIXME` 标记。
 
@@ -37,14 +37,14 @@ src/
     theme.ts                  明暗主题（支持跟随系统），body class + theme-color
     viewport.ts               移动端断点（<768px）、键盘视口、阻止整页滚动
   components/
-    base/                     Button、IconButton、Menu、Modal、Select、Toast、Tooltip、icons
+    base/                     Button、IconButton、Menu、Modal、Select、Toast、Tooltip、Avatar、icons、WhaleLogo
     chatInput/                输入框、草稿附件、拖放、语音按钮、录音频谱
     messages/                 MessageList、UserMessage、AssistantMessage、ReplyArea（思考/搜索步骤时间线）、BranchSwitcher、CopyButton、ReadAloudButton
     markdown/                 Markdown（节流 → mdast → 渲染）、AST 渲染器、代码高亮、KaTeX、Mermaid
     search/                   搜索结果面板、来源卡片、悬浮卡、引用角标
     auth/                     LoginView（服务端账户登录）
     session/                  SessionView（标题 + 消息列表 + 吸底输入框）、Welcome、MobileHeader
-    settings/                 SettingsDialog（通用 / 数据两组）、API Key 编辑、弹窗状态
+    settings/                 SettingsDialog（通用 / 账户 / 数据 / 关于）、SettingRow、账户管理、关于、API Key 编辑、弹窗状态
     sider/                    会话侧边栏、移动端抽屉、折叠态
     files/                    附件卡片、文件图标、文件预览
   i18n/                       zh.ts（key 的源头）、en.ts（satisfies 同一组 key）、index.ts
@@ -58,23 +58,25 @@ src/
     uploadExts.ts             附件扩展名白名单（约 1k 行）
     markdown/                 parse、highlight、katex、mermaid
     speech/                   recorder（录音）、readAloud（TTS 播放）
-  utils/                      id、format、url、clipboard、图片缩放
+  utils/                      id、format、url、clipboard、图片缩放、头像处理
+  assets/                     favicon.svg、DM Sans 字体与 OFL 许可证
   env.d.ts                    CSS Modules / prismjs / katex 的模块声明
 
 cmd/chat-deepseek/            Go CLI 入口（v1 服务端，见 §13）
 internal/
   config/                     数据目录、config.json 与 DeepSeek API 地址
-  database/                   SQLite 打开与 schema 迁移（当前 v2）
+  database/                   SQLite 打开与 schema 迁移（当前 v4）
   account/                    账户、固定组、最后 Owner 保护
   auth/                       Argon2id、session、CSRF
   secret/                     master.key 与 AES-GCM
   settings/                   每用户偏好与加密 API Key
-  chat/                       会话 JSON、版本锁、回收站
+  chat/                       会话 JSON、版本锁、永久删除
   filestore/                  附件原件与元数据
+  backup/                     停止服务后把数据目录打包成 ZIP
   deepseek/                   Files / Messages / ASR / TTS 上游客户端
   server/                     /api/v1 认证、设置、会话、文件、SSE/语音代理与静态 UI
   webui/                      go:embed 的 Web 构建产物（dist/.gitkeep 占位）
-  cli/                        setup/serve/user 命令
+  cli/                        setup/serve/backup/user 命令
 ```
 
 `README.md` 是唯一面向用户的功能、运行与数据说明（中文）；英文版已删除，不要恢复双语结构。`src/services/chat/history/README.md` 是历史导入导出的详细设计文档。改功能时同步更新对应文档。
@@ -93,28 +95,29 @@ Go 代码遵循 `gofmt`；服务端包不写全局状态，CLI 负责装配依�
 
 ### 4.2 持久化
 
-- SQLite 是唯一数据源：`users`、`user_groups`、`auth_sessions`、`chats`、`files`、`user_settings`、`generation_leases`。
+- SQLite 是唯一数据源：`users`、`user_groups`、`auth_sessions`、`chats`、`files`、`user_settings`。
 - 会话以完整 `Session` JSON 保存在 `chats.data`；`version` 由服务端递增，客户端在 `db.ts` 内存 map 里维护当前版本，同一会话的保存按队列串行执行。
 - 会话列表只返回摘要；详情按需加载，内存缓存上限 `SESSION_CACHE_LIMIT = 5`，淘汰时避开当前会话、生成中、未保存、删除中的会话。
-- 附件原件在 `data/files/<user_id>/<file_id>`，元数据在 `files` 表；上传接口使用前端附件 ID 做幂等键，同一用户重复上传会覆盖，其他用户占用同一 ID 会返回冲突。
+- 附件原件在 `data/files/<user_id>/<file_id>`，元数据在 `files` 表；上传接口使用前端附件 ID 做幂等键，同一用户重复上传会覆盖，其他用户占用同一 ID 会返回冲突。删除附件会同时删除元数据和磁盘原件；最后一个附件删除后移除空用户目录，启动时也会清理遗留空目录。
 - 草稿只存在内存（`drafts.ts`，按 `string | null` 区分会话 / 新对话），刷新即丢失。
 - 保存失败会中断当前落盘并在界面顶部显示重试条；`version` 409 表示会话已被其他窗口更新，需要刷新后重试。
 
 ### 4.3 历史归档
 
 - 格式 `export_format_version: 3`，ZIP 内容：`manifest.json`（首条）、`chat_sessions/{id}.json`、`chat_session_index.json`、`chat_sessions/{id}_files/...`（仅图片原件）。
-- 导入先校验格式版本，写入浏览器内存暂存；确认后逐张上传图片、逐条创建会话。当前不是服务端事务，中途失败会留下已导入的部分记录。
+- 导入先校验格式版本，写入浏览器内存暂存；确认后给附件换新 ID 并上传，再由服务端 `POST /import` 在一个事务里替换全部会话。失败只清理新上传文件，旧数据保持不变。
 - 导出只包含当前分支与能从服务端下载的图片原件；不包含 API Key / 设置 / 非图片附件原件。
-- 导入/导出/全部删除由 `backup.ts` 串行队列执行；全部删除会软删并永久清理该用户的服务端会话和附件。
+- 导入/导出/全部删除由 `backup.ts` 串行队列执行；全部删除会永久删除该用户的服务端会话，并清空附件目录。
 - 详细规则见 `src/services/chat/history/README.md`，改动格式必须同步改文档与 `format.ts` / `schema.ts`。
 
 ## 5. API 与协议
 
 - 浏览器只访问同源 `/api/v1`；DeepSeek 请求全部由 Go 服务端代理，前端没有 API Key，也没有 `__API_ORIGIN__` 构建常量。
-- 认证：`POST /auth/login` 设置 HttpOnly Cookie；`GET /auth/me` 返回 `user`、`csrf`、`expiresAt`、`hasApiKey`；`POST /auth/logout`、`POST /auth/password`。所有非 GET 请求需要 `X-CSRF-Token`，登录限流按 IP + 用户名。
+- 认证：`POST /auth/login` 设置 HttpOnly Cookie；`GET /auth/me` 返回 `user`（含 `avatar`）、`csrf`、`expiresAt`、`hasApiKey`；`POST /auth/logout`、`POST /auth/password`、`PUT /auth/username`、`PUT /auth/avatar`。所有非 GET 请求需要 `X-CSRF-Token`，登录限流按 IP + 用户名。
 - 设置：`GET/PUT /settings` 读写偏好 JSON；`PUT /settings/api-key` 保存加密 Key，`DELETE /settings/api-key` 清除，`POST /settings/api-key/verify` 用候选 Key 调 DeepSeek `/models` 校验。任何响应都不返回 Key 明文或密文。
-- 会话：`GET /chats?deleted=true`、`POST /chats`、`GET/PUT/DELETE /chats/{id}`、`POST /chats/{id}/restore`、`DELETE /chats/{id}/purge`。PUT body 为 `{session, version}`，版本不匹配返回 409。
-- 文件：`POST /files`（multipart：`id`、`purpose`、`isImage`、`file`）、`GET/DELETE /files/{id}`、`DELETE /files` 清空当前用户附件。上传 ID 由前端生成，服务端按用户幂等覆盖。
+- 会话：`GET /chats`、`POST /chats`、`GET/PUT/DELETE /chats/{id}`。PUT body 为 `{session, version}`，版本不匹配返回 409；`DELETE` 永久删除会话，并清理不再被其他会话引用的附件。
+- 导入：`POST /import` 接收已解析的会话数组，在单个 SQLite 事务里替换当前用户全部会话；附件必须提前用新 ID 上传，成功后清理旧会话不再引用的附件。
+- 文件：`POST /files`（multipart：`id`、`purpose`、`isImage`、`file`）、`GET/DELETE /files/{id}`、`DELETE /files` 清空当前用户附件。上传 ID 由前端生成，服务端按用户幂等覆盖；删除会同时移除元数据和磁盘原件。
 - 流式：`POST /stream` 接收 Anthropic Messages 请求体；服务端注入 API Key、强制 `stream: true`、把本地附件 ID 惰性上传并替换成 DeepSeek `file_id`，然后把上游 SSE 原样转发。上游非 2xx 的状态和响应体透传，前端据此分类。
 - 语音：`POST /speech/asr` 转发 multipart，`POST /speech/tts` 转发 JSON 并返回裸 PCM（24 kHz、单声道、16-bit 小端）。
 - 上游协议仍是 Anthropic 兼容 Messages：请求体含 `model`、`system`、`messages`、`thinking`、`tools`、`safety_check: { level: 'high' }`，无标题时加 `title`；模型固定 `deepseek-flash`。SSE 解析与事件合并仍在前端 `api/sse.ts`、`api/parseEvent.ts`、`chat/reply.ts`。
@@ -159,7 +162,7 @@ Go 代码遵循 `gofmt`；服务端包不写全局状态，CLI 负责装配依�
 
 ### 6.5 历史替换
 
-`replaceHistory(write)`：置 `importingHistory` 锁 → 中止所有生成 → 等删除任务与流收尾 → 递增 `historyEpoch` → 清暂存 → 执行写入 → `commitStaging` 逐条上传/创建 → 重置会话缓存与草稿。服务端暂未提供事务导入，中途失败会留下部分记录；失败路径仍会清暂存并在 `finally` 中恢复当前会话加载。
+`replaceHistory(write)`：置 `importingHistory` 锁 → 中止所有生成 → 等删除任务与流收尾 → 递增 `historyEpoch` → 清暂存 → 执行写入 → `commitStaging` 换新附件 ID、上传并调用 `POST /import` 原子替换会话 → 重置会话缓存与草稿。失败路径会清理暂存和新上传文件，旧会话保持可用。
 
 ## 7. 技术约定（改动时必须遵守）
 
@@ -200,7 +203,7 @@ Go 代码遵循 `gofmt`；服务端包不写全局状态，CLI 负责装配依�
 - 附件 ID 由前端生成、同时作为服务端文件 ID；同一用户重复上传是幂等覆盖，其他用户占用同一 ID 必须冲突，不能跨用户复用。
 - 历史归档格式如果需要变更，先评估 `schema.ts` 的向后兼容，并同步 `history/README.md` 与 `format.ts`。
 - 导出的数据绝不能包含 API Key 或应用设置。
-- 删除单个会话是软删除，不清理可能被其他会话共用的附件；清空全部历史才调用 `DELETE /files`。
+- 删除附件是硬删除（元数据 + 磁盘原件）；`DELETE /chats/{id}` 永久删除会话，只清理不再被其他会话引用的附件。清空全部历史会在逐条永久删除会话后调用 `DELETE /files`，把草稿等未引用附件一并清空。
 - `latestReminder` 是写入消息的历史快照，续写沿用，不要用当前时间重新计算覆盖历史快照。
 
 ### 服务端托管与嵌入 UI
@@ -240,8 +243,9 @@ pnpm dev
 5. 思考 / 搜索开关、来源面板、链接阅读、引用角标。
 6. 移动端布局（<768px）、键盘弹出；历史导入导出、删除全部会话。
 7. 生产二进制：`pnpm build` 后 `go build`，访问 `/` 能看到 UI 和静态资源。
+8. 停止服务后 `chat-deepseek backup` 生成 ZIP；服务运行、存在 `chat.db-wal` 或 `chat.db-shm` 时拒绝备份。
 
-当前 GitLab 仓库还没有 CI；上游遗留的 GitHub Pages workflow 只跑前端门禁。Go 测试/`go vet` 先在本地执行，GitLab CI 待配置。前端新增测试框架前先与用户确认。
+当前不配置 GitLab CI；上游遗留的 GitHub Pages workflow 只跑前端门禁，Go 测试/`go vet` 在本地执行。前端新增测试框架前先与用户确认。
 
 ## 9. 高风险点（改 store / 数据 / 流式时重点看）
 
@@ -252,9 +256,9 @@ pnpm dev
 - 安全拒绝（`stop_reason: refusal`）时已下发的思考和正文会被丢弃、只保留模板；拒绝轮次不进入上下文。
 - 上传任务按附件本地 id 复用；`serverId` 失效重传和图片长边检查会回写会话并持久化，注意不要在请求快照里用旧 `serverId`。
 - `db.ts` 的 `versions` 与 `queues` 是服务端会话落盘的关键：同一会话必须串行 PUT，收到 409 不要静默覆盖；新增保存路径不能绕过 `saveSession`。
-- 历史替换会中止所有生成、清空草稿与缓存；服务端导入不是事务，失败可能留下部分记录，界面需要明确提示。
+- 历史替换会中止所有生成、清空草稿与缓存；导入必须先上传新附件，再由 `POST /import` 单事务替换会话。失败时客户端负责删除新上传文件，旧数据不能动。
 - 附件 `id` 与服务端文件 ID 相同；服务端代理把本地 ID 换成 DeepSeek 远端 ID。不要重新引入“前端上传到 DeepSeek 拿 remote id”的旧路径。
-- 清空全部历史会调用 `DELETE /files`；单个会话删除是软删除，不能顺手删共享附件。
+- 清空全部历史会调用 `DELETE /files`；单个会话删除走 `DELETE /chats/{id}`，只删不再被引用的附件，不能直接清空用户全部附件。
 - i18n key 增删必须同时改 `zh.ts` / `en.ts`；`TranslationKey` 以 `zh.ts` 为准。
 - DeepSeek API 地址由服务端 `--api-origin` / `config.json` 控制；前端没有编译期 API 地址。
 
@@ -306,7 +310,7 @@ pnpm dev
 - **package version**：`0.1.0-official0.1.3` 是合法的 semver 预发布版本（prerelease），npm 已验证可解析，pnpm 构建也能读取；私有项目不发布 npm，所以可以采用。注意它排序在 `0.1.0` 之前，不要把它当作正式版 `0.1.0` 的替代。
 - **浏览器存储**：v1 已移除 localStorage/IndexedDB，旧浏览器数据不会自动迁移到服务端；需要保留历史时先在旧版本导出 ZIP，再在新版导入。
 - **README 语言**：只保留中文 `README.md`，英文版已删除；README 保持用户文档定位，试错与决策记录放这里。
-- **UI 文案**：应用标题、`appName` 已改为 `chat-deepseek`；`src/services/chat/history/README.md` 仍有 `chat-demo` 旧描述，改动归档格式时一并修。
+- **UI 文案与视觉**：标题、`appName` 为 `Deepseek`；字标使用 DM Sans 700（OFL，官方界面字体；官方字标本身是定制字形，不能公开使用）。侧边栏和登录页使用 Simple Icons 的 DeepSeek 鲸鱼标志（CC0-1.0）；设置入口是头像 + 用户名菜单，右侧是 `...`；登录页是深色官方风格，首页问候语左侧有鲸鱼；系统设置采用官方左右分栏与行式列表，账户资料保存后就地更新，弹窗不关闭、不整页刷新。第三方来源与商标说明见 `THIRD_PARTY_NOTICES.md`；`src/services/chat/history/README.md` 仍有 `chat-demo` 旧描述，改动归档格式时一并修。
 - **嵌入 UI**：Go 二进制只包含编译时 `internal/webui/dist/` 里的内容；仓库只提交 `.gitkeep`。忘记 `pnpm build` 会得到占位页，不是运行时找不到文件。
 - **GitLab 保护分支**：`feature/dev` 在 GitLab 上被保护，`git push --force-with-lease` 会被拒绝（protected branch）。不要重写已推送的提交；需要修历史时先在 GitLab 取消保护，或换新分支。
 - **Go 缓存**：本机默认 `GOPATH`/模块缓存位于 workspace 外，DSH 沙箱下只读。构建/测试需把 `GOPATH`、`GOMODCACHE`、`GOCACHE` 指到 workspace 的 `tmp/`（已 gitignore）；例如 `export GOPATH=$PWD/tmp/gopath GOMODCACHE=$PWD/tmp/gopath/pkg/mod GOCACHE=$PWD/tmp/go-build`。`/tmp` 在部分工具调用间不保留，不要依赖它。
@@ -319,7 +323,7 @@ pnpm dev
 
 - 自托管（Jellyfin 式）：服务端保存账户、会话、附件、设置和 API Key；浏览器只做客户端。
 - 便携：二进制与 `data/` 同级；普通用户运行，不要求 root、不写 `/var`、不依赖 systemd。
-- 账户/组管理全部走 CLI；Web 只登录、改自己的密码、设置自己的 API Key。
+- 账户/组管理全部走 CLI；Web 登录后可改自己的用户名、密码和头像，并在数据管理中设置自己的 API Key。
 - 保留现有 React 聊天逻辑（`store.ts`、`reply.ts`、`branches.ts`、`view.ts` 和组件），服务端暂做存储 + DeepSeek SSE 代理，减少与上游同步的冲突。
 - v1 只做 Web；不做 PWA、Android 原生、Docker 交付。
 
@@ -333,7 +337,7 @@ chat-deepseek/
     chat.db              # SQLite
     master.key           # API Key 加密主密钥（0600）
     files/<user_id>/     # 附件原件
-    backups/             # 快照/导出
+    backups/             # 备份 ZIP 输出目录
 ```
 
 - 默认数据目录是二进制所在目录下的 `data/`；`--data-dir` 仅用于测试或特殊安装。
@@ -358,15 +362,15 @@ chat-deepseek/
 - 附件按用户隔离：`data/files/<user_id>/`。
 - 所有用户设置（主题、语言、位置、朗读音色、thinking/search、侧栏等）存服务端；**前端不使用 localStorage/IndexedDB**，只保留 HttpOnly 会话 cookie。
 - API Key 用 AES-GCM 加密，`master.key` 单独保管；不返回前端、不写日志。
-- 聊天会话软删除/回收站；备份用 `VACUUM INTO` + 附件目录。
+- 删除会话即永久删除；备份用 CLI 把数据目录打包成 ZIP，不引入恢复服务端事务。
 
 ### API 与前端边界
 
 - 统一 `/api/v1`；同源 Cookie 会话 + CSRF；登录限流。
-- 主要接口：`auth/login|logout|me|password`、`settings`、`chats`（带 `version`）、`files`、`stream`（DeepSeek SSE 代理）、`speech/asr|tts`、`healthz`。
-- 历史导入导出仍由前端 ZIP 逻辑完成，没有独立 `/export`/`/import` 服务端事务接口。
+- 主要接口：`auth/login|logout|me|password|username|avatar`、`settings`、`chats`（带 `version`）、`import`、`files`、`stream`（DeepSeek SSE 代理）、`speech/asr|tts`、`healthz`。
+- 历史导入导出仍由前端 ZIP 逻辑完成；解析后的会话通过 `POST /import` 在服务端单事务替换，附件使用新 ID 预上传。
 - 聊天分支与上下文构建暂留在 Web TS；服务端保存 `Session` JSON 并代理 SSE。二期原生 App 前再把上下文构建下沉 Go 或复用现有逻辑。
-- 多端并发：会话 `version` 乐观锁（409）+ 单会话生成租约。
+- 多端并发：只用会话 `version` 乐观锁（409），不引入生成租约；极端同时发送时后写方收到冲突后重试。
 - 前端改造尽量保持 `db.ts`、`settings.ts`、`attachments.ts` 的函数签名，新增 `/api/v1` 客户端；不改 `reply.ts`、`branches.ts`、`view.ts` 和聊天组件，方便上游合并。
 
 ### 非目标（v1）
@@ -383,7 +387,7 @@ chat-deepseek/
 3. Argon2id、session、CSRF、登录 API、CLI `setup/user`。
 4. 设置、API Key 加密、聊天存储、文件与 DeepSeek SSE 代理。
 5. 前端登录与存储适配，移除 localStorage/IndexedDB。
-6. 备份/恢复、旧 ZIP 数据迁移、测试与文档。
+6. 备份 CLI、旧 ZIP 数据迁移、测试与文档。
 
 ### 上游同步
 
@@ -397,20 +401,19 @@ chat-deepseek/
 已完成：
 
 - Go module 与依赖；`cmd/chat-deepseek` CLI。
-- 便携 `data/` 解析、`config.json`、SQLite WAL 与 schema v2（`files.purpose`）。
+- 便携 `data/` 解析、`config.json`、SQLite WAL 与 schema v4（`files.purpose`、`users.avatar`；移除 `deleted_at`、`generation_leases`）。
 - 固定组 `Owner/Admin/User`、账户 CRUD、最后活动 Owner 保护。
-- Argon2id、登录会话、CSRF、登录限流、`auth/login|logout|me|password`。
-- CLI `setup`、`serve`、`user add/list/groups/grant/revoke/disable/enable/reset-password/delete`。
+- Argon2id、登录会话、CSRF、登录限流、`auth/login|logout|me|password|username|avatar`。
+- CLI `setup`、`serve`、`backup`、`user add/list/groups/grant/revoke/disable/enable/reset-password/delete`。
 - `master.key` 与 AES-256-GCM；每用户偏好/API Key API，Key 不出服务端、不写日志。
-- 会话 CRUD、`version` 乐观锁、软删除/回收站/恢复/永久删除，按用户隔离。
-- 附件上传/下载/软删除/批量清理，按用户目录保存；chat 请求里的本地 `file_id` 会惰性上传到 DeepSeek 并缓存远端 ID。
+- 会话 CRUD、`version` 乐观锁、永久删除，按用户隔离；历史导入经 `POST /import` 原子替换。
+- 附件上传/下载/永久删除/批量清理，按用户目录保存；chat 请求里的本地 `file_id` 会惰性上传到 DeepSeek 并缓存远端 ID。
+- `backup` CLI 把数据目录打包成 ZIP；检测到 `chat.db-wal`/`chat.db-shm` 时拒绝，避免运行中备份。
 - DeepSeek SSE 代理、ASR/TTS 代理、API Key 校验；上游错误状态原样透传。
 - 前端认证门/登录页、服务端设置与 API Key、会话/附件适配，localStorage/IndexedDB 已移除。
 - Web UI 嵌入 Go 二进制；生产静态资源与登录页已在无头 Chrome 中验证。
-- Go 单元/接口测试覆盖 secret、settings、chat、filestore、deepseek、server。
+- Go 单元/接口测试覆盖 secret、settings、chat、filestore、backup、deepseek、server。
 
 未完成：
 
-- 单会话生成租约（表已建，尚未接入 API/流）。
-- 回收站 Web UI（后端 API 已有）。
-- 备份/恢复、旧 ZIP 导入的服务端事务化、GitLab CI。
+- 前端自动化测试（可选，需先确认测试框架）。

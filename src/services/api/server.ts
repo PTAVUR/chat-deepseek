@@ -5,6 +5,7 @@ const API = '/api/v1'
 export type AuthUser = {
   id: string
   username: string
+  avatar: string
   groups: string[]
   disabled: boolean
   createdAt: number
@@ -73,6 +74,22 @@ export const changePassword = async (
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ currentPassword, newPassword }),
+  })
+}
+
+export const changeUsername = async (username: string): Promise<void> => {
+  await request(`${API}/auth/username`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username }),
+  })
+}
+
+export const saveAvatar = async (avatar: string): Promise<void> => {
+  await request(`${API}/auth/avatar`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ avatar }),
   })
 }
 

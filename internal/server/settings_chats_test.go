@@ -208,27 +208,18 @@ func TestChatsAPI(t *testing.T) {
 	if status != http.StatusNotFound {
 		t.Fatalf("get deleted status = %d", status)
 	}
-	status, body = requestJSON(t, client, http.MethodGet, ts.URL+"/api/v1/chats?deleted=true", nil, "")
+	status, body = requestJSON(t, client, http.MethodGet, ts.URL+"/api/v1/chats", nil, "")
 	if status != http.StatusOK {
-		t.Fatalf("list deleted status = %d, body = %s", status, body)
+		t.Fatalf("list after delete status = %d, body = %s", status, body)
 	}
 	if err := json.Unmarshal(body, &list); err != nil {
-		t.Fatalf("decode deleted list: %v", err)
+		t.Fatalf("decode list after delete: %v", err)
 	}
-	if len(list.Chats) != 1 {
-		t.Fatalf("deleted list = %+v", list)
-	}
-
-	status, _ = requestJSON(t, client, http.MethodPost, ts.URL+"/api/v1/chats/session-1/restore", nil, csrf)
-	if status != http.StatusNoContent {
-		t.Fatalf("restore status = %d", status)
+	if len(list.Chats) != 0 {
+		t.Fatalf("list after delete = %+v", list)
 	}
 	status, _ = requestJSON(t, client, http.MethodDelete, ts.URL+"/api/v1/chats/session-1", nil, csrf)
-	if status != http.StatusNoContent {
-		t.Fatalf("delete again status = %d", status)
-	}
-	status, _ = requestJSON(t, client, http.MethodDelete, ts.URL+"/api/v1/chats/session-1/purge", nil, csrf)
-	if status != http.StatusNoContent {
-		t.Fatalf("purge status = %d", status)
+	if status != http.StatusNotFound {
+		t.Fatalf("delete twice status = %d", status)
 	}
 }

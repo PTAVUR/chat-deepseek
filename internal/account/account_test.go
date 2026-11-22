@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"gitlab.com/elegantgx/chat-deepseek/internal/auth"
@@ -47,6 +48,38 @@ func TestCreateAndLookup(t *testing.T) {
 	}
 	if _, err := store.Create(ctx, "Owner", testHash(t), nil); !errors.Is(err, ErrUsernameTaken) {
 		t.Fatalf("duplicate username error = %v", err)
+	}
+}
+
+func TestProfileUpdates(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	user, err := store.Create(ctx, "gx", testHash(t), nil)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	other, err := store.Create(ctx, "other", testHash(t), nil)
+	if err != nil {
+		t.Fatalf("create other: %v", err)
+	}
+	if err := store.SetUsername(ctx, user.ID, "renamed"); err != nil {
+		t.Fatalf("set username: %v", err)
+	}
+	if err := store.SetUsername(ctx, user.ID, "other"); !errors.Is(err, ErrUsernameTaken) {
+		t.Fatalf("duplicate username error = %v", err)
+	}
+	if err := store.SetAvatar(ctx, user.ID, "data:image/png;base64,avatar"); err != nil {
+		t.Fatalf("set avatar: %v", err)
+	}
+	updated, err := store.GetByID(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("get updated user: %v", err)
+	}
+	if updated.Username != "renamed" || updated.Avatar != "data:image/png;base64,avatar" {
+		t.Fatalf("updated user = %+v", updated)
+	}
+	if other.Username != "other" {
+		t.Fatalf("other user changed: %+v", other)
 	}
 }
 
@@ -119,5 +152,14 @@ func TestBaseGroupAndValidation(t *testing.T) {
 	}
 	if err := ValidateUsername("a b"); err == nil {
 		t.Fatal("username with space accepted")
+	}
+	if err := ValidateUsername("a"); err != nil {
+		t.Fatalf("one-character username rejected: %v", err)
+	}
+	if err := ValidateUsername(""); err == nil {
+		t.Fatal("empty username accepted")
+	}
+	if err := ValidateUsername(strings.Repeat("a", 65)); err == nil {
+		t.Fatal("65-character username accepted")
 	}
 }
