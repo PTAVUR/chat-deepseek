@@ -67,6 +67,7 @@ func printUsage() {
 常用参数：
   --data-dir <dir>              数据目录，默认是二进制同级的 data/
   --listen <addr>               监听地址，默认 127.0.0.1:8090
+  --public-url <url>            对外访问地址（HTTPS 反代时用于 Secure Cookie）
   --api-origin <url>            DeepSeek API 地址，默认 https://api.deepseek.com
   --no-browser                  不自动打开浏览器（serve）
   --output <file>               备份输出路径（backup）

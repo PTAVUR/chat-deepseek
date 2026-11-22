@@ -1,6 +1,6 @@
 # chat-deepseek
 
-基于 DeepSeek API 的自托管聊天应用：Go 服务端 + React Web 客户端。账户、会话、附件、设置和 API Key 都保存在服务器上，浏览器只保留登录 Cookie。
+基于 DeepSeek API 的自托管聊天应用：Go 服务端 + React Web 客户端。账户、会话、附件、设置和 API Key 都保存在服务器上，浏览器只保留登录 Cookie 和内存中的 CSRF token。
 
 本项目是 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) 的 fork，当前版本 `0.1.0-official0.1.3`，代码基线为上游 `v0.1.3`。仓库位于 [GitLab](https://gitlab.com/elegantgx/chat-deepseek)。
 
@@ -32,6 +32,7 @@ CGO_ENABLED=0 go build -o chat-deepseek ./cmd/chat-deepseek
 --api-origin <url>     DeepSeek API 地址，默认 https://api.deepseek.com
 --no-browser           启动时不自动打开浏览器
 --output <file>        备份输出路径（backup）
+--password-stdin       从标准输入读取密码（setup / user add / user reset-password）
 ```
 
 服务面向自托管使用，默认只监听本机。需要局域网或公网访问时，改成 `--listen 0.0.0.0:8090`，并建议放在 HTTPS 反向代理后面。v1 不提供 Docker 镜像、systemd 单元或 Web 管理页；进程由用户自己的 supervisor、tmux 或 nohup 托管。
@@ -43,8 +44,9 @@ CGO_ENABLED=0 go build -o chat-deepseek ./cmd/chat-deepseek
 ```sh
 ./chat-deepseek user add --group Admin --password-stdin alice
 ./chat-deepseek user list
-./chat-deepseek user grant --group Admin bob
-./chat-deepseek user revoke --group Admin bob
+./chat-deepseek user groups bob
+./chat-deepseek user grant bob Admin
+./chat-deepseek user revoke bob Admin
 ./chat-deepseek user disable alice
 ./chat-deepseek user enable alice
 ./chat-deepseek user reset-password --password-stdin alice
@@ -68,7 +70,9 @@ data/
 
 Chat 会话以完整 JSON 保存，使用 `version` 乐观锁处理多标签页并发；Web 端删除会话是永久删除，会同时清理只属于该会话的附件。附件按用户隔离，聊天请求由服务端把本地附件 ID 换成 DeepSeek `file_id`，浏览器不接触 API Key。
 
-API Key 使用 AES-256-GCM 加密后写入 SQLite，`master.key` 单独保存；接口只返回是否已配置，不返回密文或明文。备份请用下面的 `chat-deepseek backup`，ZIP 会包含 `chat.db`、`master.key` 和 `files/`；缺少 `master.key` 将无法解密已有 API Key。
+API Key 使用 AES-256-GCM 加密后写入 SQLite，`master.key` 单独保存；接口只返回是否已配置，不返回密文或明文。备份请用下面的 `chat-deepseek backup`，ZIP 会包含 `config.json`、`chat.db`、`master.key` 和 `files/`；缺少 `master.key` 将无法解密已有 API Key。
+
+浏览器不使用 localStorage 或 IndexedDB；登录状态是 HttpOnly Cookie，CSRF token 只保存在当前页面内存中。
 
 ## 备份
 
@@ -83,8 +87,6 @@ API Key 使用 AES-256-GCM 加密后写入 SQLite，`master.key` 单独保存；
 ```
 
 ZIP 内容相对于数据目录：`config.json`、`chat.db`、`master.key`、`files/`，不会把 `backups/` 自身打进去。恢复时先停止服务，移走现有 `data/`，再把 ZIP 解压到 `data/`，然后重新启动。
-
-浏览器不再使用 localStorage 或 IndexedDB。登录状态是 HttpOnly Cookie，CSRF token 只保存在当前页面内存中。
 
 ## 功能
 
@@ -124,7 +126,7 @@ pnpm dev
 
 ```text
 cmd/chat-deepseek/    Go CLI 入口
-internal/             Go 服务端（config/database/account/auth/settings/chat/filestore/deepseek/server/webui）
+internal/             Go 服务端（config/database/account/auth/settings/chat/filestore/backup/deepseek/server/cli/webui 等）
 src/                  React 客户端
   app/                应用外壳、认证门、主题
   components/         聊天、设置、登录、Markdown 等界面组件
