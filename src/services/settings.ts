@@ -1,4 +1,10 @@
 import { create } from 'zustand'
+import {
+  clearApiKey as clearServerApiKey,
+  getSettings,
+  saveApiKey as saveServerApiKey,
+  updatePreferences,
+} from './api/server.js'
 import type { TtsVoice } from './api/speech.js'
 import { normalizeLocation, type UserLocation } from './location.js'
 
@@ -7,9 +13,12 @@ export type Locale = 'zh-CN' | 'en-US'
 /** 主题偏好；默认跟随系统 */
 export type ThemePreference = 'light' | 'dark' | 'system'
 
-/** 本机设置，存 localStorage：API Key、语言、主题、位置、朗读音色、深度思考与智能搜索开关、侧边栏收起状态 */
+/**
+ * 用户设置保存在服务端。apiKey 不再进入浏览器，
+ * hasApiKey 只表示服务端是否已配置，界面据此显示掩码和引导。
+ */
 type Settings = {
-  apiKey: string | null
+  hasApiKey: boolean
   locale: Locale
   themePreference: ThemePreference
   location: UserLocation | null
@@ -19,122 +28,144 @@ type Settings = {
   siderCollapsed: boolean
 }
 
-const KEYS = {
-  apiKey: 'chat-demo:api-key',
-  locale: 'chat-demo:locale',
-  location: 'chat-demo:location',
-  themePreference: 'chat-demo:theme-preference',
-  ttsVoice: 'chat-demo:tts-voice',
-  thinking: 'chat-demo:thinking',
-  search: 'chat-demo:search',
-  siderCollapsed: 'chat-demo:sider-collapsed',
-} as const
-
-const read = (key: string) => {
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
-}
-
-const write = (key: string, value: string | null) => {
-  try {
-    if (value === null) {
-      localStorage.removeItem(key)
-    } else {
-      localStorage.setItem(key, value)
-    }
-  } catch {
-    // 存储不可用时只在内存中生效
-  }
-}
-
 /** 位置选择模式跟随浏览器语言，与应用内选择的界面语言无关。 */
 export const isChineseBrowser = (): boolean =>
   (typeof navigator === 'undefined' ? 'zh' : navigator.language).toLowerCase().startsWith('zh')
 
-const initialLocale = (): Locale => {
-  const saved = read(KEYS.locale)
-  if (saved === 'zh-CN' || saved === 'en-US') {
-    return saved
-  }
-  return isChineseBrowser() ? 'zh-CN' : 'en-US'
-}
-
-const initialLocation = (): UserLocation | null => {
-  try {
-    const location = normalizeLocation(JSON.parse(read(KEYS.location) ?? 'null'))
-    if (!location) {
-      return null
-    }
-    return isChineseBrowser()
-      ? location.region === 'CN' && location.province
-        ? location
-        : null
-      : { region: location.region }
-  } catch {
-    return null
-  }
-}
+const initialLocale = (): Locale => (isChineseBrowser() ? 'zh-CN' : 'en-US')
 
 /** 未保存过时跟随系统 */
-const initialThemePreference = (): ThemePreference => {
-  const saved = read(KEYS.themePreference)
-  return saved === 'light' || saved === 'dark' ? saved : 'system'
-}
-
-/** 未保存过时使用服务端默认音色 stella（海星） */
-const initialTtsVoice = (): TtsVoice => (read(KEYS.ttsVoice) === 'tide' ? 'tide' : 'stella')
-
 export const useSettings = create<Settings>(() => ({
-  apiKey: read(KEYS.apiKey),
+  hasApiKey: false,
   locale: initialLocale(),
-  location: initialLocation(),
-  themePreference: initialThemePreference(),
-  ttsVoice: initialTtsVoice(),
-  thinking: read(KEYS.thinking) === 'true',
-  search: read(KEYS.search) === 'true',
-  siderCollapsed: read(KEYS.siderCollapsed) === 'true',
+  themePreference: 'system',
+  location: null,
+  ttsVoice: 'stella',
+  thinking: false,
+  search: false,
+  siderCollapsed: false,
 }))
 
-export const setLocale = (locale: Locale) => {
-  write(KEYS.locale, locale)
-  useSettings.setState({ locale })
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const bool = (value: unknown): boolean | undefined =>
+  typeof value === 'boolean' ? value : undefined
+
+/** 只接受已知字段；旧版本或未来版本多出来的字段忽略，缺失字段保留当前值。 */
+const applyPreferences = (value: unknown) => {
+  if (!isRecord(value)) {
+    return
+  }
+  const update: Partial<Settings> = {}
+  if (value.locale === 'zh-CN' || value.locale === 'en-US') {
+    update.locale = value.locale
+  }
+  if (
+    value.themePreference === 'light' ||
+    value.themePreference === 'dark' ||
+    value.themePreference === 'system'
+  ) {
+    update.themePreference = value.themePreference
+  }
+  if (value.ttsVoice === 'stella' || value.ttsVoice === 'tide') {
+    update.ttsVoice = value.ttsVoice
+  }
+  if ('location' in value) {
+    update.location = normalizeLocation(value.location)
+  }
+  const thinking = bool(value.thinking)
+  if (thinking !== undefined) {
+    update.thinking = thinking
+  }
+  const search = bool(value.search)
+  if (search !== undefined) {
+    update.search = search
+  }
+  const siderCollapsed = bool(value.siderCollapsed)
+  if (siderCollapsed !== undefined) {
+    update.siderCollapsed = siderCollapsed
+  }
+  if (Object.keys(update).length > 0) {
+    useSettings.setState(update)
+  }
 }
 
-export const setLocation = (value: UserLocation | null) => {
-  const location = normalizeLocation(value)
-  write(KEYS.location, location ? JSON.stringify(location) : null)
-  useSettings.setState({ location })
+/** 登录后从服务端加载设置；失败时保留默认值，由调用方决定是否阻断界面。 */
+export const loadSettings = async (): Promise<void> => {
+  const server = await getSettings()
+  applyPreferences(server.preferences)
+  useSettings.setState({ hasApiKey: server.hasApiKey })
 }
 
-export const setThemePreference = (themePreference: ThemePreference) => {
-  write(KEYS.themePreference, themePreference)
-  useSettings.setState({ themePreference })
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+let saving = false
+let pending = false
+
+const preferencesSnapshot = () => {
+  const { locale, themePreference, location, ttsVoice, thinking, search, siderCollapsed } =
+    useSettings.getState()
+  return { locale, themePreference, location, ttsVoice, thinking, search, siderCollapsed }
 }
 
-export const setTtsVoice = (ttsVoice: TtsVoice) => {
-  write(KEYS.ttsVoice, ttsVoice)
-  useSettings.setState({ ttsVoice })
+const flushPreferences = async () => {
+  if (!pending || saving) {
+    return
+  }
+  pending = false
+  saving = true
+  try {
+    await updatePreferences(preferencesSnapshot())
+  } catch {
+    // 网络失败时保留内存设置；下一次修改会再次提交，避免打断使用。
+  } finally {
+    saving = false
+    if (pending) {
+      schedulePreferencesSave()
+    }
+  }
 }
 
-export const setApiKey = (apiKey: string | null) => {
-  write(KEYS.apiKey, apiKey)
-  useSettings.setState({ apiKey })
+const schedulePreferencesSave = () => {
+  pending = true
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+  }
+  saveTimer = setTimeout(() => {
+    saveTimer = null
+    void flushPreferences()
+  }, 250)
 }
 
-export const setThinking = (thinking: boolean) => {
-  write(KEYS.thinking, String(thinking))
-  useSettings.setState({ thinking })
+const updateSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => {
+  useSettings.setState({ [key]: value } as Pick<Settings, K>)
+  schedulePreferencesSave()
 }
 
-export const setSearch = (search: boolean) => {
-  write(KEYS.search, String(search))
-  useSettings.setState({ search })
+export const setLocale = (locale: Locale) => updateSetting('locale', locale)
+
+export const setLocation = (value: UserLocation | null) =>
+  updateSetting('location', normalizeLocation(value))
+
+export const setThemePreference = (themePreference: ThemePreference) =>
+  updateSetting('themePreference', themePreference)
+
+export const setTtsVoice = (ttsVoice: TtsVoice) => updateSetting('ttsVoice', ttsVoice)
+
+/** API Key 只上传到服务端加密保存，本地不保留明文。 */
+export const setApiKey = async (apiKey: string | null): Promise<void> => {
+  if (apiKey) {
+    await saveServerApiKey(apiKey)
+    useSettings.setState({ hasApiKey: true })
+  } else {
+    await clearServerApiKey()
+    useSettings.setState({ hasApiKey: false })
+  }
 }
 
-export const setSiderCollapsed = (siderCollapsed: boolean) => {
-  write(KEYS.siderCollapsed, String(siderCollapsed))
-  useSettings.setState({ siderCollapsed })
-}
+export const setThinking = (thinking: boolean) => updateSetting('thinking', thinking)
+
+export const setSearch = (search: boolean) => updateSetting('search', search)
+
+export const setSiderCollapsed = (siderCollapsed: boolean) =>
+  updateSetting('siderCollapsed', siderCollapsed)

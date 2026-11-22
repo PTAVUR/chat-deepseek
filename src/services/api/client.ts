@@ -1,4 +1,4 @@
-import { translate, type TranslationMessage } from '../../i18n/index.js'
+import type { TranslationMessage } from '../../i18n/types.js'
 import { resizeUploadImage } from '../../utils/resizeUploadImage.js'
 import { readMessageEvent } from './parseEvent.js'
 import { readServerSentEvents } from './sse.js'
@@ -9,13 +9,6 @@ import type {
   FilePurpose,
   MessageStreamEvent,
 } from './types.js'
-
-/** 构建期 API 地址，默认 https://api.deepseek.com；本地开发支持开发服务器代理 */
-export const API_ORIGIN = __API_ORIGIN__
-/** Anthropic 兼容接口的前缀 */
-const ANTHROPIC_BASE_URL = `${API_ORIGIN}/anthropic/v1`
-/** 引用 Files API 上传的图片、调用 Anthropic 兼容 Files API 时必须携带 */
-const FILES_BETA = 'files-api-2025-04-14'
 
 export type ApiErrorKind =
   /** 非 2xx 响应 */
@@ -37,7 +30,7 @@ export class ApiError extends Error {
     message: string | TranslationMessage,
     readonly status?: number
   ) {
-    super(typeof message === 'string' ? message : translate(message.key, message.params))
+    super(typeof message === 'string' ? message : message.key)
     this.name = 'ApiError'
     this.localMessage = typeof message === 'string' ? undefined : message
   }
@@ -67,10 +60,55 @@ const readErrorResponse = async (
   return new ApiError(kind, message, response.status)
 }
 
-export const request = async (url: string, init: RequestInit): Promise<Response> => {
+/** CSRF token 只保存在内存里，刷新页面后由 /auth/me 重新下发。 */
+let csrfToken = ''
+let unauthorizedHandler: (() => void) | null = null
+
+export const setCSRFToken = (token: string) => {
+  csrfToken = token
+}
+
+/** 会话失效时通知界面回到登录页；DeepSeek 自己的 401 不会触发。 */
+export const onUnauthorized = (handler: () => void) => {
+  unauthorizedHandler = handler
+  return () => {
+    if (unauthorizedHandler === handler) {
+      unauthorizedHandler = null
+    }
+  }
+}
+
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+/** 登录、改密、校验 Key 的 401 是业务错误，不应把用户踢回登录页。 */
+const isAuthAttempt = (url: string) =>
+  url.includes('/auth/login') ||
+  url.includes('/auth/me') ||
+  url.includes('/auth/password') ||
+  url.includes('/settings/api-key/verify')
+
+type RequestOptions = {
+  /** 默认 true；DeepSeek 透传的 401 要设为 false，避免误判会话过期 */
+  handleUnauthorized?: boolean
+}
+
+export const request = async (
+  url: string,
+  init: RequestInit,
+  options: RequestOptions = {}
+): Promise<Response> => {
+  const method = (init.method ?? 'GET').toUpperCase()
+  const headers = new Headers(init.headers)
+  if (MUTATING_METHODS.has(method) && csrfToken) {
+    headers.set('X-CSRF-Token', csrfToken)
+  }
   let response: Response
   try {
-    response = await fetch(url, init)
+    response = await fetch(url, {
+      ...init,
+      headers,
+      credentials: 'same-origin',
+    })
   } catch (error) {
     if (init.signal?.aborted) {
       throw error
@@ -78,85 +116,77 @@ export const request = async (url: string, init: RequestInit): Promise<Response>
     throw new ApiError('network', error instanceof Error ? error.message : String(error))
   }
   if (!response.ok) {
+    if (response.status === 401 && options.handleUnauthorized !== false && !isAuthAttempt(url)) {
+      unauthorizedHandler?.()
+    }
     throw await readErrorResponse(response)
   }
   return response
 }
 
-const anthropicHeaders = (apiKey: string, beta: boolean): Record<string, string> => ({
-  // DeepSeek 兼容接口的鉴权方式，也可使用 Authorization: Bearer。
-  'x-api-key': apiKey,
-  // Files API 和通过 file_id 引用图片时必传；纯文本聊天无需携带。
-  ...(beta ? { 'anthropic-beta': FILES_BETA } : {}),
-})
-
-/** 用 GET /models 校验 API Key（不产生费用） */
+/** 用服务端保存的 Key 校验；请求体里只出现本次输入的候选 Key。 */
 export const verifyApiKey = async (apiKey: string, signal?: AbortSignal): Promise<void> => {
-  await request(`${API_ORIGIN}/models`, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${apiKey}` },
-    signal,
-  })
+  await request(
+    '/api/v1/settings/api-key/verify',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey }),
+      signal,
+    },
+    { handleUnauthorized: false }
+  )
 }
 
-/**
- * POST /anthropic/v1/files 上传附件（不设过期时间，会话里的历史附件一直可用）。
- * purpose 为 null 时不传该字段（图片）；purpose 必须排在 file 之前。
- */
 export const uploadFile = async (
-  apiKey: string,
   file: File,
   purpose: FilePurpose | null,
+  isImage: boolean,
+  id: string,
   signal?: AbortSignal
 ): Promise<FileObject> => {
   const form = new FormData()
+  // 服务端用这个 ID 保存原件，和消息里的附件 id 保持一致，刷新后可直接下载预览。
+  form.append('id', id)
   if (purpose) {
     form.append('purpose', purpose)
   }
-  form.append('file', purpose === null ? await resizeUploadImage(file, signal) : file)
-  const response = await request(`${ANTHROPIC_BASE_URL}/files`, {
+  form.append('isImage', String(isImage))
+  form.append('file', isImage ? await resizeUploadImage(file, signal) : file)
+  const response = await request('/api/v1/files', {
     method: 'POST',
-    headers: anthropicHeaders(apiKey, true),
     body: form,
     signal,
   })
   return (await response.json()) as FileObject
 }
 
-/** DELETE /anthropic/v1/files/{file_id} */
-export const deleteFile = async (apiKey: string, fileId: string): Promise<void> => {
-  await request(`${ANTHROPIC_BASE_URL}/files/${encodeURIComponent(fileId)}`, {
-    method: 'DELETE',
-    headers: anthropicHeaders(apiKey, true),
-  })
+/** 删除服务端附件；当前聊天删除不调用，保留给回收站/清理功能。 */
+export const deleteFile = async (fileId: string): Promise<void> => {
+  await request(`/api/v1/files/${encodeURIComponent(fileId)}`, { method: 'DELETE' })
 }
 
-const hasFile = (body: CreateMessageRequest) =>
-  body.messages.some(
-    (message) =>
-      typeof message.content !== 'string' &&
-      message.content.some((block) => block.type === 'image' || block.type === 'document')
-  )
-
 /**
- * POST /anthropic/v1/messages（stream: true），逐个产出流式事件，收到 message_stop 时结束。
- * ping、保活注释与无法解析的内容不产出；中止请求时抛出 signal 的 AbortError。
+ * 服务端 SSE 代理：服务端注入 API Key 并把本地附件 ID 换成 DeepSeek file_id。
+ * 逐个产出流式事件，收到 message_stop 时结束。
  */
 export async function* streamMessage(
-  apiKey: string,
   body: CreateMessageRequest,
   signal: AbortSignal
 ): AsyncGenerator<MessageStreamEvent> {
-  const response = await request(`${ANTHROPIC_BASE_URL}/messages`, {
-    method: 'POST',
-    headers: {
-      ...anthropicHeaders(apiKey, hasFile(body)),
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
+  const response = await request(
+    '/api/v1/stream',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({ ...body, stream: true }),
+      signal,
     },
-    body: JSON.stringify({ ...body, stream: true }),
-    signal,
-  })
+    { handleUnauthorized: false }
+  )
   const contentType = response.headers.get('Content-Type') ?? ''
   if (!response.body || !contentType.includes('text/event-stream')) {
     throw await readErrorResponse(response, 'protocol', '')

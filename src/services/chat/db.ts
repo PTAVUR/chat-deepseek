@@ -1,251 +1,261 @@
-import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
+import { ApiError, request, uploadFile } from '../api/client.js'
+import type { FilePurpose } from '../api/types.js'
 import { toSessionSummary, type Session, type SessionSummary } from './types.js'
 
-/** IndexedDB 存储结构版本；新增或调整存储、索引时递增。 */
-const DB_VERSION = 11
-
-/** 文件原件按附件的本地 id 存储，所有引用同一 id 的消息共用一份；用于缩略图、打开查看，以及没有 serverId 时补传。 */
+/** 文件原件由服务端保存；这个类型保留给历史导入/导出代码做参数标注。 */
 export type StoredFile = {
   id: string
   blob: Blob
 }
 
-/** 文件引用留在摘要中，删除会话时通过索引判断原件是否仍被引用。 */
-type StoredSessionSummary = SessionSummary & { fileIds: string[] }
+const API = '/api/v1'
 
-interface ChatDB extends DBSchema {
-  /** 当前使用的会话，界面读写都在这里 */
-  sessions: { key: string; value: Session }
-  sessionSummaries: {
-    key: string
-    value: StoredSessionSummary
-    indexes: { fileIds: string }
-  }
-  /** 当前使用的文件原件 */
-  files: { key: string; value: StoredFile }
-  /**
-   * 历史导入的暂存：导入过程中会话与原件只写入这两个存储，`sessions` / `files` 保持不变；
-   * 全部校验通过后在一个事务中替换正式数据并清空暂存，失败时只清空暂存。
-   */
-  sessionsStaging: { key: string; value: Session }
-  filesStaging: { key: string; value: StoredFile }
-}
+/** 每个会话的当前 version 只在内存中维护；刷新后由 GET 会话重新填充。 */
+const versions = new Map<string, number>()
+/** 同一会话的保存串行执行，避免连续 persist 用同一个 version 互相冲突。 */
+const queues = new Map<string, Promise<unknown>>()
 
-let dbPromise: Promise<IDBPDatabase<ChatDB>> | null = null
-
-const storedSummary = (session: Session): StoredSessionSummary => ({
-  ...toSessionSummary(session),
-  fileIds: [
-    ...new Set(
-      session.messages.flatMap((message) =>
-        message.role === 'user' ? message.files.map((file) => file.id) : []
+const enqueue = <T>(id: string, task: () => Promise<T>): Promise<T> => {
+  const previous = queues.get(id) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(task)
+  queues.set(
+    id,
+    next
+      .then(
+        () => undefined,
+        () => undefined
       )
-    ),
-  ],
-})
+      .finally(() => {
+        if (queues.get(id) === next) {
+          queues.delete(id)
+        }
+      })
+  )
+  return next
+}
 
-const abortTransaction = (tx: { abort(): void }) => {
+const readJSON = async <T>(response: Response): Promise<T> => (await response.json()) as T
+
+const fetchChat = async (
+  id: string
+): Promise<{ session: Session; version: number } | undefined> => {
   try {
-    tx.abort()
-  } catch {
-    // 事务已因请求失败中止。
+    const response = await request(`${API}/chats/${encodeURIComponent(id)}`, { method: 'GET' })
+    const body = await readJSON<{ session: Session; version: number }>(response)
+    versions.set(id, body.version)
+    return body
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return undefined
+    }
+    throw error
   }
 }
 
-// 每个操作拿到连接后立即创建事务；IndexedDB 按创建顺序执行范围重叠的事务，读取总能看到之前发起的写入。
-const getDB = () =>
-  (dbPromise ??= openDB<ChatDB>('chat-demo', DB_VERSION, {
-    upgrade(db, _oldVersion, _newVersion, tx) {
-      // 初始化当前格式需要的存储与索引，不迁移旧消息。
-      for (const name of ['sessions', 'files', 'sessionsStaging', 'filesStaging'] as const) {
-        if (!db.objectStoreNames.contains(name)) {
-          db.createObjectStore(name, { keyPath: 'id' })
-        }
-      }
-      const summaries = db.objectStoreNames.contains('sessionSummaries')
-        ? tx.objectStore('sessionSummaries')
-        : db.createObjectStore('sessionSummaries', { keyPath: 'id' })
-      if (!summaries.indexNames.contains('fileIds')) {
-        summaries.createIndex('fileIds', 'fileIds', { multiEntry: true })
-      }
-    },
-  }).catch((error: unknown) => {
-    // 打开失败后允许界面重试，避免一直复用已拒绝的 Promise。
-    dbPromise = null
-    throw error
-  }))
+const createChat = async (session: Session): Promise<number> => {
+  const response = await request(`${API}/chats`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session }),
+  })
+  const body = await readJSON<{ version: number }>(response)
+  versions.set(session.id, body.version)
+  return body.version
+}
 
-export const loadSessionSummaries = async (): Promise<SessionSummary[]> =>
-  (await (await getDB()).getAll('sessionSummaries')).map(toSessionSummary)
+const updateChat = async (session: Session, version: number): Promise<number> => {
+  const response = await request(`${API}/chats/${encodeURIComponent(session.id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, version }),
+  })
+  const body = await readJSON<{ version: number }>(response)
+  versions.set(session.id, body.version)
+  return body.version
+}
 
-export const loadSession = async (id: string): Promise<Session | undefined> =>
-  (await getDB()).get('sessions', id)
+const putChat = async (session: Session): Promise<void> => {
+  const version = versions.get(session.id)
+  if (version === undefined) {
+    try {
+      await createChat(session)
+      return
+    } catch (error) {
+      // 上一次创建可能已经成功但响应丢失；重新读取后按更新处理。
+      if (!(error instanceof ApiError) || error.status !== 409) {
+        throw error
+      }
+      const existing = await fetchChat(session.id)
+      if (!existing) {
+        throw error
+      }
+    }
+  }
+  await updateChat(session, versions.get(session.id) ?? 1)
+}
+
+export const loadSessionSummaries = async (): Promise<SessionSummary[]> => {
+  const response = await request(`${API}/chats`, { method: 'GET' })
+  const body = await readJSON<{ chats: SessionSummary[] }>(response)
+  return body.chats.map(toSessionSummary)
+}
+
+export const loadSession = async (id: string): Promise<Session | undefined> => {
+  const stored = await fetchChat(id)
+  return stored?.session
+}
 
 export const saveSession = async (session: Session, files: StoredFile[] = []): Promise<void> => {
-  const summary = storedSummary(session)
-  const tx = (await getDB()).transaction(['sessions', 'sessionSummaries', 'files'], 'readwrite')
-  await Promise.all([
-    (async () => {
-      try {
-        for (const file of files) {
-          await tx.objectStore('files').put(file)
-        }
-        await tx.objectStore('sessions').put(session)
-        await tx.objectStore('sessionSummaries').put(summary)
-      } catch (error) {
-        abortTransaction(tx)
-        throw error
-      }
-    })(),
-    tx.done,
-  ])
+  void files
+  await enqueue(session.id, () => putChat(session))
 }
 
-/** 未打开的会话也可重命名，只读取该会话，原子更新详情和列表。 */
+/** 未打开的会话也可重命名：先读最新 version，再整体 PUT。 */
 export const renameSession = async (id: string, title: string): Promise<void> => {
-  const tx = (await getDB()).transaction(['sessions', 'sessionSummaries'], 'readwrite')
-  await Promise.all([
-    (async () => {
-      try {
-        const sessions = tx.objectStore('sessions')
-        const session = await sessions.get(id)
-        if (session) {
-          session.title = title
-          await sessions.put(session)
-          await tx.objectStore('sessionSummaries').put(storedSummary(session))
-        }
-      } catch (error) {
-        abortTransaction(tx)
-        throw error
-      }
-    })(),
-    tx.done,
-  ])
+  await enqueue(id, async () => {
+    const stored = await fetchChat(id)
+    if (!stored) {
+      return
+    }
+    await updateChat({ ...stored.session, title, updatedAt: Date.now() }, stored.version)
+  })
 }
 
-/** 删除会话，仅清理已无会话引用的本地原件；远端文件不删。 */
 export const deleteSession = async (sessionId: string): Promise<void> => {
-  const tx = (await getDB()).transaction(['sessions', 'sessionSummaries', 'files'], 'readwrite')
-  await Promise.all([
-    (async () => {
-      try {
-        const summaries = tx.objectStore('sessionSummaries')
-        const summary = await summaries.get(sessionId)
-        await tx.objectStore('sessions').delete(sessionId)
-        await summaries.delete(sessionId)
-        for (const id of summary?.fileIds ?? []) {
-          if ((await summaries.index('fileIds').count(id)) === 0) {
-            await tx.objectStore('files').delete(id)
-          }
-        }
-      } catch (error) {
-        abortTransaction(tx)
-        throw error
-      }
-    })(),
-    tx.done,
-  ])
+  await enqueue(sessionId, async () => {
+    await request(`${API}/chats/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+    versions.delete(sessionId)
+  })
 }
 
-const putFiles = async (store: 'files' | 'filesStaging', files: StoredFile[]) => {
-  const tx = (await getDB()).transaction(store, 'readwrite')
-  await Promise.all([...files.map((file) => tx.store.put(file)), tx.done])
+/** 附件已在上传时写入服务端，保存会话不再需要搬 Blob。 */
+export const saveFiles = async (files: StoredFile[]): Promise<void> => {
+  void files
 }
 
-export const saveFiles = (files: StoredFile[]): Promise<void> => putFiles('files', files)
+export const loadFile = async (id: string): Promise<Blob | undefined> => {
+  try {
+    const response = await request(`${API}/files/${encodeURIComponent(id)}`, { method: 'GET' })
+    return await response.blob()
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return undefined
+    }
+    throw error
+  }
+}
 
-export const loadFile = async (id: string): Promise<Blob | undefined> =>
-  (await (await getDB()).get('files', id))?.blob
+// 历史导入在浏览器内存里暂存；全部写完后再调用 commitStaging。
+let stagedSessions = new Map<string, Session>()
+let stagedFiles = new Map<string, StoredFile>()
 
-/** 清空导入暂存：开始导入前清除上次中断（如关闭页面）遗留的数据，导入失败后清除本次写入。 */
 export const clearStaging = async (): Promise<void> => {
-  const tx = (await getDB()).transaction(['sessionsStaging', 'filesStaging'], 'readwrite')
-  await Promise.all([
-    tx.objectStore('sessionsStaging').clear(),
-    tx.objectStore('filesStaging').clear(),
-    tx.done,
-  ])
+  stagedSessions = new Map()
+  stagedFiles = new Map()
 }
 
 export const addStagingSession = async (session: Session): Promise<void> => {
-  await (await getDB()).add('sessionsStaging', session)
+  stagedSessions.set(session.id, session)
 }
 
-export const saveStagingFiles = (files: StoredFile[]): Promise<void> =>
-  putFiles('filesStaging', files)
+export const saveStagingFiles = async (files: StoredFile[]): Promise<void> => {
+  for (const file of files) {
+    stagedFiles.set(file.id, file)
+  }
+}
 
-/** 图片位于会话 JSON 之后；全部读完后回填具体 MIME，保留归档给出的 isImage 标识。 */
 export const updateStagingFileTypes = async (types: ReadonlyMap<string, string>): Promise<void> => {
-  const tx = (await getDB()).transaction('sessionsStaging', 'readwrite')
-  await Promise.all([
-    (async () => {
-      for (let cursor = await tx.store.openCursor(); cursor; cursor = await cursor.continue()) {
-        const session = cursor.value
-        let changed = false
-        for (const message of session.messages) {
-          if (message.role !== 'user') {
-            continue
-          }
-          for (const file of message.files) {
-            const type = types.get(file.id) ?? ''
-            if (file.mimeType !== type) {
-              file.mimeType = type
-              changed = true
-            }
-          }
-        }
-        if (changed) {
-          await cursor.update(session)
+  for (const session of stagedSessions.values()) {
+    for (const message of session.messages) {
+      if (message.role !== 'user') {
+        continue
+      }
+      for (const file of message.files) {
+        const type = types.get(file.id)
+        if (type !== undefined) {
+          file.mimeType = type
         }
       }
-    })(),
-    tx.done,
-  ])
+    }
+  }
+}
+
+const purposeFor = (name: string, isImage: boolean): FilePurpose | null => {
+  if (isImage) {
+    return null
+  }
+  return /\.(pdf|doc|docx|ppt|pptx)$/i.test(name) ? 'rich_layout_recognition' : 'user_data'
+}
+
+const allChatIDs = async (): Promise<string[]> => {
+  const ids = new Set<string>()
+  for (const deleted of [false, true]) {
+    const response = await request(`${API}/chats${deleted ? '?deleted=true' : ''}`, {
+      method: 'GET',
+    })
+    const body = await readJSON<{ chats: SessionSummary[] }>(response)
+    for (const chat of body.chats) {
+      ids.add(chat.id)
+    }
+  }
+  return [...ids]
+}
+
+/** 清空当前账户的全部会话；先软删再永久删除，避免导入的相同 ID 与旧记录冲突。 */
+const clearAllChats = async () => {
+  for (const id of await allChatIDs()) {
+    try {
+      await deleteSession(id)
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) {
+        throw error
+      }
+    }
+    await request(`${API}/chats/${encodeURIComponent(id)}/purge`, { method: 'DELETE' })
+  }
+  await request(`${API}/files`, { method: 'DELETE' })
 }
 
 /**
- * 导入完成后用暂存替换正式数据：同一事务中替换会话、摘要和原件，并清空暂存。
- * 逐条游标复制，同一时间只读取一条记录；事务失败时整体回滚，正式数据不变。
+ * 用暂存替换正式数据。v1 先逐条上传附件、创建会话；失败时已经写入的会话保留，
+ * 真正的服务端事务/备份恢复在后续版本补齐。
  */
 export const commitStaging = async (): Promise<SessionSummary[]> => {
-  const summaries: SessionSummary[] = []
-  const tx = (await getDB()).transaction(
-    ['sessions', 'sessionSummaries', 'files', 'sessionsStaging', 'filesStaging'],
-    'readwrite'
-  )
-  const move = async (from: 'sessionsStaging' | 'filesStaging', to: 'sessions' | 'files') => {
-    try {
-      const target = tx.objectStore(to)
-      await target.clear()
-      if (to === 'sessions') {
-        await tx.objectStore('sessionSummaries').clear()
-      }
-      for (
-        let cursor = await tx.objectStore(from).openCursor();
-        cursor;
-        cursor = await cursor.continue()
-      ) {
-        await target.put(cursor.value)
-        if (to === 'sessions') {
-          const summary = storedSummary(cursor.value as Session)
-          await tx.objectStore('sessionSummaries').put(summary)
-          summaries.push(toSessionSummary(summary))
+  if (stagedSessions.size === 0) {
+    await clearAllChats()
+    return []
+  }
+  await clearAllChats()
+  const metadata = new Map<string, { name: string; isImage: boolean }>()
+  for (const session of stagedSessions.values()) {
+    for (const message of session.messages) {
+      if (message.role === 'user') {
+        for (const file of message.files) {
+          metadata.set(file.id, { name: file.name, isImage: file.isImage })
         }
       }
-      await tx.objectStore(from).clear()
-    } catch (error) {
-      // 同步抛出的错误不会让事务自动回滚，需显式中止，避免只提交清空和部分移入。
-      abortTransaction(tx)
-      throw error
     }
   }
-  await Promise.all([move('sessionsStaging', 'sessions'), move('filesStaging', 'files'), tx.done])
-  // 直接返回本次提交的列表，调用方无需在替换成功后再发起可能失败的读取。
+  for (const [id, stored] of stagedFiles) {
+    const info = metadata.get(id) ?? { name: id, isImage: false }
+    await uploadFile(
+      new File([stored.blob], info.name, { type: stored.blob.type }),
+      purposeFor(info.name, info.isImage),
+      info.isImage,
+      id
+    )
+  }
+  const summaries: SessionSummary[] = []
+  for (const session of stagedSessions.values()) {
+    versions.delete(session.id)
+    await enqueue(session.id, () => createChat(session))
+    summaries.push(toSessionSummary(session))
+  }
   return summaries
 }
 
-/** 本地存储失败不打断对话，只在控制台留痕 */
+/** 服务端错误无法像 IndexedDB 那样在本地兜底，保留统一日志出口方便组件复用。 */
 export const reportStorageError = (action: string) => (error: unknown) => {
   // eslint-disable-next-line no-console
-  console.error(`[storage] ${action} failed`, error)
+  console.error(`[server] ${action} failed`, error)
 }

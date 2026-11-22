@@ -11,6 +11,7 @@ import { IconButton } from '../base/IconButton.js'
 import { Modal } from '../base/Modal.js'
 import { showToast } from '../base/toastState.js'
 import { openSettings } from '../settings/settingsDialogState.js'
+import { logout } from '../../services/api/server.js'
 import { closeMobileSider, useMobileSider } from './mobileSiderState.js'
 import { SessionItem } from './SessionItem.js'
 import styles from './Sider.module.css'
@@ -97,6 +98,17 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
             <IconSettingsOutline16 />
           </span>
           <span className={styles.settingsLabel}>{t('settings')}</span>
+        </button>
+        <button
+          type="button"
+          className={styles.logout}
+          onClick={() => {
+            void logout()
+              .then(() => window.location.assign('/'))
+              .catch(() => showToast({ key: 'logoutFailed', type: 'error' }))
+          }}
+        >
+          {t('logout')}
         </button>
       </div>
       {deleting ? (

@@ -17,22 +17,17 @@ const cssLoader = {
 }
 
 type ConfigOptions = {
-  /** 公开 API 的地址，注入为 __API_ORIGIN__ */
-  apiOrigin?: string
   /** 开发服务器配置，支持本地接口代理 */
   devServer?: Configuration['devServer']
 }
 
-/** 创建构建配置，支持自定义 API 地址和开发服务器选项 */
-export const createConfig = ({
-  apiOrigin = 'https://api.deepseek.com',
-  devServer,
-}: ConfigOptions = {}): Configuration => ({
+/** 创建构建配置，支持自定义开发服务器选项 */
+export const createConfig = ({ devServer }: ConfigOptions = {}): Configuration => ({
   mode: dev ? 'development' : 'production',
   entry: './src/main.tsx',
   output: {
     path: path.resolve(root, 'dist'),
-    // 运行时按当前脚本地址推导资源路径，file:// 下异步 chunk、字体都按相对位置加载
+    // 运行时按当前脚本地址推导资源路径，异步 chunk、字体仍按相对位置加载
     publicPath: 'auto',
     filename: 'static/js/[name].[contenthash:8].js',
     chunkFilename: 'static/js/async/[name].[contenthash:8].js',
@@ -80,13 +75,23 @@ export const createConfig = ({
       scriptLoading: 'defer',
       meta: { 'application-version': version },
     }),
-    new rspack.DefinePlugin({ __API_ORIGIN__: JSON.stringify(apiOrigin) }),
     new rspack.CopyRspackPlugin({
       patterns: [{ from: path.resolve(root, 'LICENSE'), to: 'LICENSE', toType: 'file' }],
     }),
   ],
   performance: { hints: false },
-  devServer: { port: 8090, ...devServer },
+  devServer: {
+    port: 8090,
+    // 开发时前端在 8090，Go 服务用 8091；同源 Cookie 依赖代理保留原始 Host。
+    proxy: [
+      {
+        context: ['/api'],
+        target: 'http://127.0.0.1:8091',
+        changeOrigin: false,
+      },
+    ],
+    ...devServer,
+  },
 })
 
 // eslint-disable-next-line import/no-default-export
