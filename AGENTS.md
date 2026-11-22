@@ -257,6 +257,8 @@ CI 与本地门禁一致：`pnpm type` + `pnpm lint` + `pnpm build`。新增测�
   ```
 
 - 冲突只在 `feature/*` 分支解决，不要为了让合并通过而修改 `main`。
+- 标签：上游 tag 原样镜像到 `origin`（`v0.1.0`–`v0.1.3` 已推送）；同步上游 tag 用 `git fetch upstream --tags`，再 `git push origin --tags`。
+- 我们自己的发布 tag 使用独立格式，例如 `1.0.0-official0.3.0`（不带 `v` 前缀，不与上游 `vX.Y.Z` 混用）；发布时按此规则打 tag。
 - `AGENTS.md` 提交在 `feature/dev`，不要提交到 `main`。
 - 本机 SSH 注意：系统配置 `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` 权限异常，仓库已设置 `core.sshCommand = ssh -F /dev/null` 绕过；换到 SSH 正常的机器时可删除该配置。
 - 查看当前跟踪关系：`git remote -v`、`git branch -vv`。
