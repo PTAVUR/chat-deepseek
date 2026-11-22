@@ -276,3 +276,4 @@ CI 与本地门禁一致：`pnpm type` + `pnpm lint` + `pnpm build`。新增测�
 - **存储命名**：IndexedDB 数据库名和 localStorage 前缀仍是 `chat-demo`（代码未改）；直接改名会让已有本地数据不可见。后续如果要统一成 `chat-deepseek`，需要迁移或明确接受数据重置。
 - **README 语言**：只保留中文 `README.md`，英文版已删除；README 保持用户文档定位，试错与决策记录放这里。
 - **当前 UI 文案**：应用标题 / `appName` 仍是上游的“API 使用 demo”，`src/services/chat/history/README.md` 仍写 `chat-demo`；这些属于后续代码或文档统一事项。
+- **GitLab 保护分支**：`feature/dev` 在 GitLab 上被保护，`git push --force-with-lease` 会被拒绝（protected branch）。不要重写已推送的提交；需要修历史时先在 GitLab 取消保护，或换新分支。
