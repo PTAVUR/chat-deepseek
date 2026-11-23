@@ -91,6 +91,8 @@ jobs:
           install -m 0755 dist-gui/chat-deepseek-gui "$app/Contents/MacOS/chat-deepseek-gui"
           install -m 0755 dist/darwin-arm64/chat-deepseek "$app/Contents/MacOS/chat-deepseek"
           install -m 0644 gui/assets/whale.icns "$app/Contents/Resources/chat-deepseek-gui.icns"
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md "$app/Contents/Resources/"
+          chmod 0644 "$app/Contents/Resources/README.md" "$app/Contents/Resources/LICENSE" "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
           printf 'APPL????' > "$app/Contents/PkgInfo"
           python - "$bundle_version" "$app" <<'PY'
           import plistlib
@@ -117,28 +119,45 @@ jobs:
               plistlib.dumps(info, fmt=plistlib.FMT_XML)
           )
           PY
+          python - "$app" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          app = pathlib.Path(sys.argv[1])
+          config = {
+              "binary": "",
+              "data_dir": "~/Library/Application Support/chat-deepseek/data",
+              "backup_dir": "~/Library/Application Support/chat-deepseek/data/backups",
+          }
+          (app / "Contents" / "Resources" / "config.gui.json").write_text(
+              json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          python -m json.tool "$app/Contents/Resources/config.gui.json" >/dev/null
           codesign --force --deep --sign - "$app"
           ls -lh "$app/Contents/MacOS/chat-deepseek-gui"
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+          dmg="chat-deepseek-${VERSION}-macos-arm64.dmg"
+          root="$PWD/dist-dmg"
+          rm -rf "$root" "$dmg"
+          mkdir -p "$root"
+          ditto "$PWD/dist-gui/chat-deepseek-gui.app" "$root/chat-deepseek-gui.app"
+          ln -s /Applications "$root/Applications"
+          hdiutil create -volname "chat-deepseek" -srcfolder "$root" -ov -format UDZO "$dmg"
+          ls -lh "$dmg"
       - name: Package
         run: |
           set -euo pipefail
           archive="chat-deepseek-${VERSION}-macos-arm64.zip"
-          rm -rf release "${archive}"
-          mkdir -p release
-          install -m 0755 dist/darwin-arm64/chat-deepseek release/chat-deepseek
-          ditto "$PWD/dist-gui/chat-deepseek-gui.app" release/chat-deepseek-gui.app
-          cat > release/chat-deepseek-gui <<'SH'
-          #!/bin/sh
-          exec "$(dirname "$0")/chat-deepseek-gui.app/Contents/MacOS/chat-deepseek-gui" "$@"
-          SH
-          chmod 0755 release/chat-deepseek-gui
-          mkdir -p release/src
-          git archive HEAD | tar -x -C release/src
-          cp README.md LICENSE THIRD_PARTY_NOTICES.md release/
-          chmod 0644 release/README.md release/LICENSE release/THIRD_PARTY_NOTICES.md
-          ./release/chat-deepseek version
-          (cd release && zip -9 -r "../${archive}" .)
-          ls -lh "${archive}"
+          dmg="chat-deepseek-${VERSION}-macos-arm64.dmg"
+          rm -f "$archive"
+          zip -9 "$archive" "$dmg"
+          test "$(unzip -Z1 "$archive")" = "$dmg"
+          ls -lh "$archive"
       - name: Upload archive
         uses: actions/upload-artifact@v7
         with:

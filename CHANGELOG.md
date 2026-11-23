@@ -22,13 +22,15 @@
 ### 管理界面
 
 - 新增 Python/PySide6 管理界面，覆盖初始化、服务启停、账户管理、备份和命令输出；窗口使用系统原生标题栏。
-- Windows 可执行文件和 macOS `.app` 使用鲸鱼应用图标；macOS 发布包改为 `.app` 加同名启动器。
+- Windows 可执行文件和 macOS `.app` 使用鲸鱼应用图标；macOS 发布包改为只含一个 DMG。
 - 启动时自动读取最近备份；备份记录可直接恢复；已知错误翻译成可操作提示，无法识别时才显示原始输出。
+- GUI 设置持久化：二进制、数据、备份路径写入用户配置目录的 `config.gui.json`，监听地址、Public URL 和 API 地址写入数据目录的 `config.json`。
 
 ### 发布
 
-- 提供 Linux amd64、Windows amd64、macOS arm64 发布 ZIP；根目录的 `src/` 改为完整项目源码（内部保留前端 `src/src/`）。
-- Linux 包不再附带 GUI 二进制，改为附带 `gui/` 源码，体积明显减小；Windows/macOS 仍附带预编译 GUI。
+- 提供 Linux/Windows ZIP 和 macOS DMG；Linux/Windows 根目录的 `src/` 为完整项目源码（内部保留前端 `src/src/`），macOS ZIP 只含 DMG。
+- Linux 包不再附带 GUI 二进制，改为附带 `gui/` 源码，体积明显减小；Windows 仍附带预编译 GUI。
+- macOS DMG 只有 `.app` 和 `/Applications` 链接；CLI、预配置的 `config.gui.json` 和文档都在 `.app` 内，数据目录默认在 `~/Library/Application Support/chat-deepseek/`。
 - 三个平台各自通过 GitHub Actions 手动构建；在 tag 上运行会创建或更新 GitHub Release。
 
 ### 注意

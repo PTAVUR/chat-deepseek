@@ -402,7 +402,9 @@ class SettingsDialog(BaseDialog):
         super().__init__(parent, "设置", 720, 480)
         self.defaults = defaults
         self._initial_data_dir = data_dir
-        self._description("这些设置只作用于当前窗口，不会写入配置文件。")
+        self._description(
+            "路径设置保存在 config.gui.json；监听地址、Public URL 和 API 地址写入数据目录的 config.json。"
+        )
 
         grid = QGridLayout()
         grid.setContentsMargins(0, 6, 0, 0)

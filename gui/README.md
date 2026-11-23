@@ -24,6 +24,7 @@ gui\.venv\Scripts\python gui\app.py
 
 `app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录；Windows 为 `chat-deepseek.exe`），也可以在“设置”里选择。
 Linux 发布包根目录的 `gui/` 就是本目录，CLI 在上一级；解压后按上面的命令执行即可，发布包不再提供 Linux GUI 二进制。
+GUI 的路径设置保存在用户配置目录的 `config.gui.json`：Linux 是 `~/.config/chat-deepseek/`，macOS 是 `~/Library/Application Support/chat-deepseek/`，Windows 是 `%APPDATA%\chat-deepseek\`。
 没有图形桌面的服务器直接用 CLI，不需要安装这些依赖。
 
 ## 结构
@@ -32,7 +33,8 @@ Linux 发布包根目录的 `gui/` 就是本目录，CLI 在上一级；解压�
 app.py          主窗口、状态和操作流程
 cli.py          子进程执行与 serve 进程管理
 parsing.py      解析 user list / backup list / serve / version 输出
-server_config.py 读取 config.json 与默认参数
+server_config.py 读写服务端 config.json 与默认参数
+gui_config.py    读写 GUI 的 config.gui.json（路径设置）
 dialogs.py      Qt 输入、确认、路径选择和设置对话框
 widgets.py      自绘卡片、按钮、输入框、状态点、组标签与成员行
 fonts.py        选择 Windows/macOS/Linux 的系统 UI 字体
@@ -41,10 +43,10 @@ assets/whale.svg DeepSeek 鲸鱼标志（Simple Icons，CC0-1.0）
 assets/whale.ico Windows 可执行文件图标
 assets/whale.icns macOS .app 图标
 assets/whale.png 512px 图标（备用）
-tests/          解析器与配置读取测试
+tests/          解析器与配置读写测试
 ```
 
-解析器与配置读取测试：
+解析器与配置读写测试：
 
 ```sh
 gui/.venv/bin/python -m unittest discover -s gui/tests -v
@@ -58,13 +60,13 @@ gui/.venv/bin/python -m unittest discover -s gui/tests -v
 - “备份记录…”读取 `backup list`，可以查看时间、文件名和大小，并恢复选中的备份；恢复前先停止服务，会覆盖 `chat.db`、`config.json`、`master.key` 和 `files/`。
 - 关闭窗口会停止由本窗口启动的 `serve`；外部启动的进程不会被接管。
 - Windows 上停止服务是强制结束进程；同一个数据目录同时只能有一个服务实例。
-- 设置页可改二进制目录、数据目录、备份地址、监听地址、Public URL 和 API 地址；这些值用于本窗口后续命令，不写 `config.json`，重启后按二进制默认值和 `config.json` 重新预填。
+- 设置页可改二进制目录、数据目录、备份地址、监听地址、Public URL 和 API 地址。路径写入用户配置目录的 `config.gui.json`，监听地址、Public URL 和 API 地址写入数据目录的 `config.json`；保存后重启服务生效。`config.gui.json` 是运行时文件，不提交。macOS 默认数据目录是 `~/Library/Application Support/chat-deepseek/data`。
 - 字体优先使用 Microsoft YaHei UI / PingFang SC / Noto Sans CJK SC，关闭子像素抗锯齿并使用灰度抗锯齿，字号比常规桌面控件大一档。
 - 窗口标题栏、边框和圆角全部使用系统原生：Windows 是 x/□/-，GNOME 只有关闭按钮，macOS 是交通灯。不再自绘标题栏、不设置 frameless 或透明窗口。对话框也使用原生标题栏，内容高度已预留标题栏。设置和命令行提示的标题不带应用名后缀。
 - 账户列表是 60px 两行成员行：头像、用户名、组标签和右侧状态点；悬停/选中为长胶囊，选中头像变实心蓝，底部信息栏显示“已选择 / 取消选择”和操作。
 - 卡片使用五次贝塞尔连续曲率（32px），按钮、输入框、开关用胶囊端（20px），账户悬停/选中为长胶囊。
 - 界面跟随系统深浅色，并在系统主题变化时重刷配色、QSS 与原生控件调色板。
 - 依赖不随仓库提交；PySide6 / Qt 的许可证见各自发布包。
-- 发布包中 Windows 用 `.ico` 设置 EXE 图标；macOS 用 `.app` 承载 `.icns` 图标，并附带同名启动器。Linux 发布包不含 GUI 二进制；从源码运行或自行打包时，ELF 文件不携带文件图标，窗口/任务栏图标由 Qt 在运行时设置。
+- 发布包中 Windows 用 `.ico` 设置 EXE 图标；macOS 用 `.app` 承载 `.icns` 图标并打进 DMG。Linux 发布包不含 GUI 二进制；从源码运行或自行打包时，ELF 文件不携带文件图标，窗口/任务栏图标由 Qt 在运行时设置。
 - Linux 需要 Qt 的 xcb 运行库；Debian/Ubuntu 若提示缺少 `xcb-cursor`，安装 `libxcb-cursor0`。
 - Linux 没有图形桌面时继续用 CLI，不需要安装 PySide6。

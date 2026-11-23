@@ -49,6 +49,7 @@ except ImportError as exc:  # pragma: no cover - 依赖缺失时给出可操作�
 
 import cli
 import dialogs
+import gui_config
 import parsing
 import server_config
 import theme
@@ -65,11 +66,27 @@ class MainWindow(QMainWindow):
 
         binary = Path(cli.find_binary()).expanduser()
         self.defaults = server_config.defaults(binary.parent)
+        self.gui_config_path = gui_config.default_path()
+
         initial = dict(self.defaults)
+        saved = gui_config.load(self.gui_config_path)
+        if not saved:
+            for seed in gui_config.seed_paths():
+                saved = gui_config.load(seed)
+                if saved:
+                    break
+        for key in ("binary", "data_dir", "backup_dir"):
+            if saved.get(key):
+                initial[key] = saved[key]
+        saved_binary = Path(initial["binary"]).expanduser()
+        if not saved_binary.is_file() and not cli.binary_in(saved_binary).is_file():
+            initial["binary"] = self.defaults["binary"]
+
         loaded = server_config.load(initial["data_dir"])
         initial.update(
             {key: loaded[key] for key in ("listen", "public_url", "api_origin")}
         )
+        self.defaults = server_config.defaults(Path(initial["binary"]))
 
         self.binary_dir = initial["binary"]
         self.data_dir = initial["data_dir"]
@@ -839,11 +856,8 @@ class MainWindow(QMainWindow):
         except RuntimeError as exc:
             self._error("chat-deepseek", str(exc))
             return
-        args = ["serve", "--no-browser", *self._data_args(), *self._listen_args()]
-        if self.public_url.strip():
-            args += ["--public-url", self.public_url.strip()]
-        if self.api_origin.strip():
-            args += ["--api-origin", self.api_origin.strip()]
+        # 服务端配置由 serve 从 data/config.json 读取；GUI 只负责把设置写进去。
+        args = ["serve", "--no-browser", *self._data_args()]
 
         self.server_url = None
         self.server_address = None
@@ -1115,18 +1129,44 @@ class MainWindow(QMainWindow):
         if not isinstance(dialog.value, dict):
             return
         value = dialog.value
-        self.binary_dir = str(value["binary"])
-        self.data_dir = str(value["data_dir"])
-        self.backup_dir = str(value["backup_dir"])
-        self.listen = str(value["listen"])
-        self.public_url = str(value["public_url"])
-        self.api_origin = str(value["api_origin"])
+        binary = str(value["binary"])
+        data_dir = str(value["data_dir"])
+        backup_dir = str(value["backup_dir"])
+        listen = str(value["listen"])
+        public_url = str(value["public_url"])
+        api_origin = str(value["api_origin"])
+        try:
+            server_config.save(
+                data_dir,
+                {
+                    "listen": listen,
+                    "public_url": public_url,
+                    "api_origin": api_origin,
+                },
+            )
+            gui_config.save(
+                self.gui_config_path,
+                {
+                    "binary": binary,
+                    "data_dir": data_dir,
+                    "backup_dir": backup_dir,
+                },
+            )
+        except OSError as exc:
+            self._error("保存设置失败", f"无法写入配置文件：{exc}")
+            return
+        self.binary_dir = binary
+        self.data_dir = data_dir
+        self.backup_dir = backup_dir
+        self.listen = listen
+        self.public_url = public_url
+        self.api_origin = api_origin
         self.defaults = server_config.defaults(Path(self.binary_dir))
         self._update_data_summary()
         if self.server is not None and self.server.running:
-            self._toast("设置已更新；服务重启后生效")
+            self._toast("设置已保存；服务重启后生效")
         else:
-            self._toast("设置已更新")
+            self._toast("设置已保存")
         self._load_version()
         self.refresh_users()
         self.refresh_backups()

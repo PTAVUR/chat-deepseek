@@ -53,7 +53,7 @@ gui/.venv/bin/python gui/app.py
 
 Windows 用 `gui\.venv\Scripts\python gui\app.py`；更完整的命令见 [gui/README.md](gui/README.md)。需要 Python 3.10+ 和 `requirements.txt` 里的 PySide6。Linux 还缺 Qt 的 xcb 运行库时，Debian/Ubuntu 可安装 `libxcb-cursor0`、`libxkbcommon-x11-0`、`libgl1`、`libegl1` 等系统包。
 
-`gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。设置页的二进制目录、数据目录、备份地址和监听地址会按当前二进制目录与 `data/config.json` 预填，Public URL 对应 `--public-url`，API 地址对应 `--api-origin`；左下角的“恢复默认”回到二进制同级 `data/`、`data/backups/`、`127.0.0.1:8090` 和官方 API 地址。数据卡片可以立即备份、查看备份记录并从记录中恢复；恢复前必须先停止服务。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里。
+`gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。设置页的二进制目录、数据目录、备份地址保存在平台用户配置目录的 `config.gui.json`：Linux 是 `~/.config/chat-deepseek/`，macOS 是 `~/Library/Application Support/chat-deepseek/`，Windows 是 `%APPDATA%\chat-deepseek\`。监听地址、Public URL 和 API 地址写入数据目录的 `config.json`，`serve` 启动时直接读取。左下角的“恢复默认”在 Windows/Linux 回到二进制同级 `data/`、`data/backups/`，在 macOS 回到 `~/Library/Application Support/chat-deepseek/data/`；监听地址和 API 地址回到 `127.0.0.1:8090` 和官方地址。数据卡片可以立即备份、查看备份记录并从记录中恢复；恢复前必须先停止服务。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里。
 
 关闭窗口会停止由它启动的服务；外部启动的 `chat-deepseek serve` 不会被它接管。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止服务是强制结束进程；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
 
@@ -80,11 +80,20 @@ LICENSE
 THIRD_PARTY_NOTICES.md
 ```
 
-Windows 和 macOS ZIP 根目录还包含预编译 GUI：Windows 是 `chat-deepseek-gui.exe`，macOS 是 `chat-deepseek-gui.app` 和同名启动器；两者的 `src/` 同样是完整项目源码。
+Windows ZIP 根目录还包含预编译 GUI `chat-deepseek-gui.exe`，`src/` 同样是完整项目源码。
+
+macOS ZIP 只包含一个 DMG：
+
+```text
+chat-deepseek-<版本>-macos-arm64.zip
+  chat-deepseek-<版本>-macos-arm64.dmg
+```
+
+DMG 内只有 `chat-deepseek-gui.app` 和指向 `/Applications` 的链接；CLI、`config.gui.json` 和三份文档都在 `.app/Contents/Resources` 里。把 `.app` 拖到 Applications 即可；`config.gui.json` 把数据目录和备份目录指到 `~/Library/Application Support/chat-deepseek/`，`.app` 内的副本作为首次启动的模板，真正的用户配置仍写这个标准目录。macOS 包不再附带源码。
 
 Linux 不附带预编译 GUI。PyInstaller onefile 会绑定构建机的 glibc，无法同时覆盖 Ubuntu、Fedora 等不同版本；`gui/` 是可直接构建的 GUI 源码，按 [gui/README.md](gui/README.md) 在解压目录创建 venv、安装 PySide6，再运行 `gui/.venv/bin/python gui/app.py`。CLI 是静态二进制，可以直接使用。`gui/` 是完整源码中 `src/gui/` 的副本，方便解压后直接编辑；不使用符号链接。
 
-- Linux 使用 `ubuntu-latest`，只构建 CLI 并打包源码；Windows 使用 `windows-latest`，macOS 使用 `macos-latest`（arm64），继续构建预编译 GUI。
+- Linux 使用 `ubuntu-latest`，只构建 CLI 并打包源码；Windows 使用 `windows-latest`，构建 CLI 和 GUI；macOS 使用 `macos-latest`（arm64），构建 `.app`、DMG 和只含 DMG 的 ZIP。
 - 在 tag 上运行会把 ZIP 上传到对应的 GitHub Release；在分支上运行只保留 Actions artifacts。
 - 三个 workflow 可以并行；发布步骤会对同一 tag 的 Release 创建和上传做重试，避免同时创建时的竞态。
 - Windows EXE 和 macOS `.app` 使用鲸鱼应用图标；Linux 从源码构建 GUI 时由程序设置窗口/任务栏图标。
