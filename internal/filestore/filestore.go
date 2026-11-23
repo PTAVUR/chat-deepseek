@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/id"
+	"github.com/elegantgx/chat-deepseek/internal/id"
 )
 
 const (

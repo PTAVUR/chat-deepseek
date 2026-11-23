@@ -17,7 +17,7 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/id"
+	"github.com/elegantgx/chat-deepseek/internal/id"
 )
 
 // MinPasswordLength 是 CLI/服务端接受的最短密码长度。

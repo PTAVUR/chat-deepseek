@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/filestore"
+	"github.com/elegantgx/chat-deepseek/internal/filestore"
 )
 
 func chatWithFiles(id string, fileIDs ...string) map[string]any {

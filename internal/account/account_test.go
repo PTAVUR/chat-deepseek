@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/auth"
-	"gitlab.com/elegantgx/chat-deepseek/internal/database"
+	"github.com/elegantgx/chat-deepseek/internal/auth"
+	"github.com/elegantgx/chat-deepseek/internal/database"
 )
 
 func newTestStore(t *testing.T) *Store {

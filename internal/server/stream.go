@@ -7,10 +7,10 @@ import (
 	"io"
 	"net/http"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/chat"
-	"gitlab.com/elegantgx/chat-deepseek/internal/deepseek"
-	"gitlab.com/elegantgx/chat-deepseek/internal/filestore"
-	"gitlab.com/elegantgx/chat-deepseek/internal/settings"
+	"github.com/elegantgx/chat-deepseek/internal/chat"
+	"github.com/elegantgx/chat-deepseek/internal/deepseek"
+	"github.com/elegantgx/chat-deepseek/internal/filestore"
+	"github.com/elegantgx/chat-deepseek/internal/settings"
 )
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {

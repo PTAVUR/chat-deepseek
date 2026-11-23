@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/chat"
-	"gitlab.com/elegantgx/chat-deepseek/internal/filestore"
+	"github.com/elegantgx/chat-deepseek/internal/chat"
+	"github.com/elegantgx/chat-deepseek/internal/filestore"
 )
 
 type chatListResponse struct {

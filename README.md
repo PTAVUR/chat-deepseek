@@ -2,7 +2,7 @@
 
 基于 DeepSeek API 的自托管聊天应用：Go 服务端 + React Web 客户端。账户、会话、附件、设置和 API Key 都保存在服务器上，浏览器只保留登录 Cookie 和内存中的 CSRF token。
 
-本项目是 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) 的 fork，当前版本 `0.1.0-official0.1.3`，代码基线为上游 `v0.1.3`。仓库位于 [GitLab](https://gitlab.com/elegantgx/chat-deepseek)。
+本项目是 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) 的 fork，当前版本 `0.1.0-official0.1.3`，代码基线为上游 `v0.1.3`。仓库位于 [GitHub](https://github.com/elegantgx/chat-deepseek)。
 
 ## 运行
 
@@ -57,25 +57,13 @@ Windows 用 `gui\.venv\Scripts\python gui\app.py`；更完整的命令见 [gui/R
 
 关闭窗口会停止由它启动的服务；外部启动的 `chat-deepseek serve` 不会被它接管。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止服务是强制结束进程；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
 
-## 发布流水线
+## 发布包
 
-`.gitlab-ci.yml` 定义手动触发的发布流水线：只允许在 GitLab 的 CI/CD → Pipelines → Run pipeline 中启动，push、标签、合并请求和定时任务都不会自动打包。
-
-手动运行后构建 Web 静态资源、三个平台的 Go 二进制和 PyInstaller GUI，最后生成：
-
-```text
-chat-deepseek-<标签或提交 SHA>-linux-amd64.zip
-chat-deepseek-<标签或提交 SHA>-windows-amd64.zip
-chat-deepseek-<标签或提交 SHA>-macos-arm64.zip
-```
+仓库暂时没有自动发布流水线。发布包需要按上面的构建步骤手动生成：Web 静态资源、三个平台的 Go 二进制，以及在对应平台用 PyInstaller 打包的 GUI。
 
 每个 ZIP 根目录都包含 `chat-deepseek`（Windows 为 `.exe`）、`chat-deepseek-gui`（Windows 为 `.exe`）、`src/`，以及 `README.md`、`LICENSE`、`THIRD_PARTY_NOTICES.md`。`chat-deepseek-gui` 需要和同目录的 `chat-deepseek` 一起使用。
 
-- Linux 用默认共享 Runner 和 Python 3.13 镜像构建。
-- Windows 用 GitLab.com 的 `saas-windows-medium-amd64`（Beta）。
-- macOS 用 `saas-macos-medium-m1`，需要 Premium/Ultimate 的 hosted runner；当前只产出 arm64，PyInstaller 不能从 Linux 交叉打包。使用自建 Runner 时把对应 job 的 `tags` 换成自己的标签。
-- macOS 包没有签名/公证，首次打开可能需要在 Finder 右键“打开”，或执行 `xattr -cr`。Windows 包也未签名，可能出现 SmartScreen 提示。
-- 首次运行需要 Runner 能访问 npm、PyPI、Go 模块代理和 Docker 镜像仓库。
+macOS 包没有签名/公证，首次打开可能需要在 Finder 右键“打开”，或执行 `xattr -cr`。Windows 包也未签名，可能出现 SmartScreen 提示。
 
 ## 账户
 

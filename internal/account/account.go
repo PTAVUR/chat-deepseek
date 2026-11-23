@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/auth"
-	"gitlab.com/elegantgx/chat-deepseek/internal/id"
+	"github.com/elegantgx/chat-deepseek/internal/auth"
+	"github.com/elegantgx/chat-deepseek/internal/id"
 )
 
 // Group 是固定的账户组名，不带复数 s。

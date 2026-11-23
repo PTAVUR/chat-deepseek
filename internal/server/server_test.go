@@ -11,12 +11,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/account"
-	"gitlab.com/elegantgx/chat-deepseek/internal/auth"
-	"gitlab.com/elegantgx/chat-deepseek/internal/config"
-	"gitlab.com/elegantgx/chat-deepseek/internal/database"
-	"gitlab.com/elegantgx/chat-deepseek/internal/filestore"
-	"gitlab.com/elegantgx/chat-deepseek/internal/secret"
+	"github.com/elegantgx/chat-deepseek/internal/account"
+	"github.com/elegantgx/chat-deepseek/internal/auth"
+	"github.com/elegantgx/chat-deepseek/internal/config"
+	"github.com/elegantgx/chat-deepseek/internal/database"
+	"github.com/elegantgx/chat-deepseek/internal/filestore"
+	"github.com/elegantgx/chat-deepseek/internal/secret"
 )
 
 func newTestServer(t *testing.T) (*Server, *httptest.Server, *http.Client) {

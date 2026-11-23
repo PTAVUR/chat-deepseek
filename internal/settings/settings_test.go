@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/account"
-	"gitlab.com/elegantgx/chat-deepseek/internal/database"
-	"gitlab.com/elegantgx/chat-deepseek/internal/secret"
+	"github.com/elegantgx/chat-deepseek/internal/account"
+	"github.com/elegantgx/chat-deepseek/internal/database"
+	"github.com/elegantgx/chat-deepseek/internal/secret"
 )
 
 func newTestStore(t *testing.T) (*Store, *sql.DB, string) {

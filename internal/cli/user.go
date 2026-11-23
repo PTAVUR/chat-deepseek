@@ -11,8 +11,8 @@ import (
 
 	"golang.org/x/term"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/account"
-	"gitlab.com/elegantgx/chat-deepseek/internal/auth"
+	"github.com/elegantgx/chat-deepseek/internal/account"
+	"github.com/elegantgx/chat-deepseek/internal/auth"
 )
 
 type groupList []account.Group

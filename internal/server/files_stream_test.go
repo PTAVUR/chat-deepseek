@@ -14,8 +14,8 @@ import (
 	"sync"
 	"testing"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/deepseek"
-	"gitlab.com/elegantgx/chat-deepseek/internal/filestore"
+	"github.com/elegantgx/chat-deepseek/internal/deepseek"
+	"github.com/elegantgx/chat-deepseek/internal/filestore"
 )
 
 func uploadMultipart(

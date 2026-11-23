@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/term"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/auth"
+	"github.com/elegantgx/chat-deepseek/internal/auth"
 )
 
 var stdinReader = bufio.NewReader(os.Stdin)

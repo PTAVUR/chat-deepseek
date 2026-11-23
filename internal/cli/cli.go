@@ -18,14 +18,14 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/account"
-	"gitlab.com/elegantgx/chat-deepseek/internal/auth"
-	"gitlab.com/elegantgx/chat-deepseek/internal/buildinfo"
-	"gitlab.com/elegantgx/chat-deepseek/internal/config"
-	"gitlab.com/elegantgx/chat-deepseek/internal/database"
-	"gitlab.com/elegantgx/chat-deepseek/internal/filestore"
-	"gitlab.com/elegantgx/chat-deepseek/internal/secret"
-	"gitlab.com/elegantgx/chat-deepseek/internal/server"
+	"github.com/elegantgx/chat-deepseek/internal/account"
+	"github.com/elegantgx/chat-deepseek/internal/auth"
+	"github.com/elegantgx/chat-deepseek/internal/buildinfo"
+	"github.com/elegantgx/chat-deepseek/internal/config"
+	"github.com/elegantgx/chat-deepseek/internal/database"
+	"github.com/elegantgx/chat-deepseek/internal/filestore"
+	"github.com/elegantgx/chat-deepseek/internal/secret"
+	"github.com/elegantgx/chat-deepseek/internal/server"
 )
 
 // Run 执行命令行；返回错误由 main 打印。

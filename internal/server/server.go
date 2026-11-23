@@ -19,16 +19,16 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/account"
-	"gitlab.com/elegantgx/chat-deepseek/internal/auth"
-	"gitlab.com/elegantgx/chat-deepseek/internal/buildinfo"
-	"gitlab.com/elegantgx/chat-deepseek/internal/chat"
-	"gitlab.com/elegantgx/chat-deepseek/internal/config"
-	"gitlab.com/elegantgx/chat-deepseek/internal/deepseek"
-	"gitlab.com/elegantgx/chat-deepseek/internal/filestore"
-	"gitlab.com/elegantgx/chat-deepseek/internal/secret"
-	"gitlab.com/elegantgx/chat-deepseek/internal/settings"
-	"gitlab.com/elegantgx/chat-deepseek/internal/webui"
+	"github.com/elegantgx/chat-deepseek/internal/account"
+	"github.com/elegantgx/chat-deepseek/internal/auth"
+	"github.com/elegantgx/chat-deepseek/internal/buildinfo"
+	"github.com/elegantgx/chat-deepseek/internal/chat"
+	"github.com/elegantgx/chat-deepseek/internal/config"
+	"github.com/elegantgx/chat-deepseek/internal/deepseek"
+	"github.com/elegantgx/chat-deepseek/internal/filestore"
+	"github.com/elegantgx/chat-deepseek/internal/secret"
+	"github.com/elegantgx/chat-deepseek/internal/settings"
+	"github.com/elegantgx/chat-deepseek/internal/webui"
 )
 
 // Server 持有 API 依赖；Handler 返回可挂到 http.Server 的处理链。

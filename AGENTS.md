@@ -6,7 +6,7 @@
 ## 1. 项目是什么
 
 - 项目：`chat-deepseek`，本地目录 `chat-deepseek`，版本 `0.1.0-official0.1.3`，MIT。
-- 来源：`https://github.com/deepseek-ai/chat-demo.git` 的克隆。远程 `upstream`（原 `origin`）指向上游，`origin` 指向自己的 GitLab 仓库 `git@gitlab.com:elegantgx/chat-deepseek.git`（SSH）。
+- 来源：`https://github.com/deepseek-ai/chat-demo.git` 的克隆。远程 `upstream`（原 `origin`）指向上游，`origin` 指向自己的 GitHub fork `git@github.com:elegantgx/chat-deepseek.git`（SSH）。
 - 分支策略：`main` 只镜像上游、不在上面开发；日常改造在 `feature/*` 分支进行，定期把 `main` 同步到上游后合并进 feature 分支，再推送到 `origin`。
 - 定位：**Go 自托管服务端 + React Web 客户端**；服务端保存账户、会话、附件、设置和 API Key，浏览器不再保存聊天或 Key，也不再使用 localStorage/IndexedDB。
 - 能力：服务端账户登录、多会话与消息分支、流式回复、深度思考、联网搜索与链接阅读、附件上传、Markdown / 代码高亮 / KaTeX / Mermaid、中英双语、明暗主题、移动端、语音输入与朗读、历史导入导出。
@@ -30,7 +30,6 @@
 ## 3. 目录与关键文件
 
 ```text
-.gitlab-ci.yml               手动触发的多平台发布流水线
 src/
   main.tsx                    启动：setupTheme、ensureKatex、createRoot(<App/>)
   app/                        应用外壳、主题、视口与全局样式
@@ -264,7 +263,7 @@ pnpm dev
 9. `gui/.venv/bin/python gui/app.py` 用临时数据目录点击初始化、启动/停止、成员列表、账户操作和备份；确认密码不出现在命令行与输出。
 10. `gui/.venv/bin/python -m unittest discover -s gui/tests` 通过。
 
-GitLab 发布流水线在 `.gitlab-ci.yml`，只接受 UI 手动 Run pipeline（`CI_PIPELINE_SOURCE == "web"`）；push、tag、MR、schedule 都不会创建流水线。手动运行后构建 Web、三平台 Go（Linux 上交叉编译）与 PyInstaller GUI（各平台原生），产出 linux-amd64、windows-amd64、macos-arm64 三个 ZIP，根目录都包含 `chat-deepseek`、`chat-deepseek-gui`、`src/` 和三份文档。Windows 使用 `saas-windows-medium-amd64`，macOS 使用 `saas-macos-medium-m1`（需要 Premium/Ultimate）；自建 Runner 要替换 tags。上游遗留的 GitHub Pages workflow 只跑前端门禁，Go 测试/`go vet` 在本地执行。前端新增测试框架前先与用户确认。
+仓库目前没有自动发布流水线，GitHub Actions 尚未添加。发布包需要按上面的构建步骤手动生成：Web、三平台 Go（Linux 上交叉编译）与各平台 PyInstaller GUI，产出 linux-amd64、windows-amd64、macos-arm64 三个 ZIP，根目录都包含 `chat-deepseek`、`chat-deepseek-gui`、`src/` 和三份文档。上游遗留的 GitHub Pages workflow 只跑前端门禁，Go 测试/`go vet` 在本地执行。前端新增测试框架前先与用户确认。
 
 ## 9. 高风险点（改 store / 数据 / 流式时重点看）
 
@@ -296,10 +295,10 @@ GitLab 发布流水线在 `.gitlab-ci.yml`，只接受 UI 手动 Run pipeline（
 ## 11. Git 工作流
 
 - 远程：
-  - `origin` = `git@gitlab.com:elegantgx/chat-deepseek.git`（自己的 GitLab，SSH，日常推送目标）
+  - `origin` = `git@github.com:elegantgx/chat-deepseek.git`（自己的 GitHub fork，SSH，日常推送目标）
   - `upstream` = `https://github.com/deepseek-ai/chat-demo.git`（上游，只读同步）
 - `main` 是上游镜像：只同步、不开发、不在上面提交或合并本地改动；`feature/*` 承载本地改造。
-- 本仓库已设置 `remote.pushDefault = origin`，`git push` 默认推到自己的 GitLab；`git pull` 仍按各分支自己的跟踪关系。
+- 本仓库已设置 `remote.pushDefault = origin`，`git push` 默认推到自己的 GitHub fork；`git pull` 仍按各分支自己的跟踪关系。
 - 定期同步上游并合并：
 
   ```sh
@@ -323,7 +322,7 @@ GitLab 发布流水线在 `.gitlab-ci.yml`，只接受 UI 手动 Run pipeline（
 
 > README 只保留用户文档；排查过程、环境限制和临时决定记录在这里。
 
-- **GitLab SSH**：本机 `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` 权限异常，直接 `ssh` / `git push` 会报 `Bad owner or permissions`。仓库已设置 `core.sshCommand = ssh -F /dev/null` 绕过；换到 SSH 正常的机器时可以删除该配置。
+- **SSH 配置**：本机 `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` 权限异常，直接 `ssh` / `git push` 会报 `Bad owner or permissions`。仓库已设置 `core.sshCommand = ssh -F /dev/null` 绕过；换到 SSH 正常的机器时可以删除该配置。
 - **pnpm 12 预检**：本机全局 store 在 workspace 外（`~/.local/share/pnpm/store/v11`），DSH 沙箱下 `pnpm type` / `lint` / `build` 前的自动安装检查会报 `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` / 只读文件系统；脚本本身仍会继续执行并通过。依赖未变化时可忽略；真正需要安装依赖时可尝试把 store 指到可写目录（如 `--store-dir /tmp/pnpm-store`），当前环境尚未验证。
 - **上游连通性**：检查 GitHub upstream 时 `git ls-remote` 曾超时；本地 `upstream/main` 跟踪关系正常，同步失败先排查网络或代理。
 - **package version**：`0.1.0-official0.1.3` 是合法的 semver 预发布版本（prerelease），npm 已验证可解析，pnpm 构建也能读取；私有项目不发布 npm，所以可以采用。注意它排序在 `0.1.0` 之前，不要把它当作正式版 `0.1.0` 的替代。
@@ -332,9 +331,9 @@ GitLab 发布流水线在 `.gitlab-ci.yml`，只接受 UI 手动 Run pipeline（
 - **UI 文案与视觉**：标题、`appName` 为 `Deepseek`；字标使用 DM Sans 700（OFL，官方界面字体；官方字标本身是定制字形，不能公开使用）。侧边栏和登录页使用 Simple Icons 的 DeepSeek 鲸鱼标志（CC0-1.0）；设置入口是头像 + 用户名菜单，右侧是 `...`；登录页跟随明暗主题（亮色白底 / 暗色官方风格），首页问候语左侧有鲸鱼；系统设置采用官方左右分栏与行式列表，账户资料保存后就地更新，弹窗不关闭、不整页刷新。第三方来源与商标说明见 `THIRD_PARTY_NOTICES.md`。
 - **GUI 管理界面**：`gui/app.py` 是 Python 3.10+/PySide6 界面，所有操作都拼成 `chat-deepseek` 子命令，不写 `data/`；默认参数从 `data/config.json` 读取，密码通过 `--password-stdin` 走 stdin。`gui/.venv` 由 `python3 -m venv` 创建、已由 `gui/.gitignore` 忽略，依赖从清华源安装。界面把 `user list` 解析成成员列表，把 `backup list` 解析成备份记录（时间/大小/文件名），把 `serve` 日志解析成状态；失败时把“服务运行中”“端口占用”“最后一个 Owner”“账户不存在”“密码不合规”等已知条件翻译成可操作提示，解析不了才显示“未知错误”和原始输出。CLI 参数、退出码或中文输出变化时要同步改 `parsing.py` 和测试。设置页是二进制目录、数据目录、备份地址、监听地址、Public URL、API 地址，默认值按二进制目录和 `config.json` 预填，左下角“恢复默认”回到内置默认；保存只作用于本窗口后续命令，不写 `config.json`。启动时自动读取 `backup list` 并在信息栏显示最近一条；数据卡片的“备份记录…”再次读取列表，恢复前确认并调用 `backup restore --yes`。
 - **GUI 视觉**：窗口标题栏、边框和圆角全部使用系统原生（Windows x/□/-，GNOME 关闭按钮，macOS 交通灯），不再自绘、不再 frameless、不再设置透明窗口或自定义圆角；对话框也用原生标题栏，内容高度预留标题栏。不设置 `applicationDisplayName`，标题只有“设置”“命令行提示”等。账户列表是 60px 两行成员行：36px 头像、用户名、Owner/Admin/User 组标签、右侧状态点；悬停/选中为长胶囊（高度贴满行，不再和上一条分隔线留缝），选中头像变实心蓝；底部信息栏显示“已选择 / 取消选择”和操作。卡片 32px，按钮/输入框/开关用胶囊端（20px），阴影自绘并关闭子像素抗锯齿。界面优先使用 Microsoft YaHei UI / PingFang SC / Noto Sans CJK SC，字号整体大一档。启动时用户列表与版本并行加载；Windows 子进程用 `CREATE_NO_WINDOW` 避免控制台闪窗。Windows 上停止服务是强制结束；关闭 GUI 只停止由它启动的服务，不接管外部进程。
-- **GitLab 发布流水线**：`.gitlab-ci.yml` 只允许 UI 手动触发（`workflow.rules` 限定 `CI_PIPELINE_SOURCE == "web"`），push/tag/MR/schedule 不创建流水线。job 分 Web（Node + pnpm）、Go（golang:1.27，Linux 上交叉编译 linux-amd64 / windows-amd64 / darwin-arm64，`-trimpath -ldflags`）、三个 GUI（Python + PyInstaller 6.22.3 单文件；Windows 用 hosted Windows，macOS 用 hosted M1，macOS 不加 `--windowed` 以保持 `chat-deepseek-gui` 单文件）和三个 package job（ZIP 根目录放两个二进制、`src/` 与三份文档）。`build-go` 通过 `needs` 拿 Web 构建产物；`chat-deepseek-gui` 和 `chat-deepseek` 必须同级，frozen 模式从 `sys.executable` 所在目录找 CLI。Linux/PyInstaller 本机已验证；Windows/macOS 与流水线本身尚未在 GitLab Runner 上实际运行。
+- **发布包**：GitHub Actions 尚未配置，发布包目前手动构建。流程是 Web、三平台 Go（Linux 上交叉编译 linux-amd64 / windows-amd64 / darwin-arm64，`-trimpath -ldflags`）和三个 GUI（Python + PyInstaller 6.22.3 单文件；macOS 不加 `--windowed` 以保持 `chat-deepseek-gui` 单文件）。ZIP 根目录放两个二进制、`src/` 与三份文档；`chat-deepseek-gui` 和 `chat-deepseek` 必须同级，frozen 模式从 `sys.executable` 所在目录找 CLI。Windows/macOS 包未签名。
 - **嵌入 UI**：Go 二进制只包含编译时 `internal/webui/dist/` 里的内容；仓库只提交 `.gitkeep`。忘记 `pnpm build` 会得到占位页，不是运行时找不到文件。
-- **GitLab 保护分支**：`feature/dev` 在 GitLab 上被保护，`git push --force-with-lease` 会被拒绝（protected branch）。不要重写已推送的提交；需要修历史时先在 GitLab 取消保护，或换新分支。
+- **分支历史**：`feature/dev` 已推送到 GitHub；不要重写已推送的提交，需要修历史时先在 GitHub 处理分支保护设置或换新分支。
 - **Go 缓存**：本机默认 `GOPATH`/模块缓存位于 workspace 外，DSH 沙箱下只读。构建/测试需把 `GOPATH`、`GOMODCACHE`、`GOCACHE` 指到 workspace 的 `tmp/`（已 gitignore）；例如 `export GOPATH=$PWD/tmp/gopath GOMODCACHE=$PWD/tmp/gopath/pkg/mod GOCACHE=$PWD/tmp/go-build`。`/tmp` 在部分工具调用间不保留，不要依赖它。
 
 ## 13. v1 服务端改造（进行中）
@@ -431,7 +430,6 @@ chat-deepseek/
 - 会话 CRUD、`version` 乐观锁、永久删除，按用户隔离；历史导入经 `POST /import` 原子替换。
 - 附件上传/下载/永久删除/批量清理，按用户目录保存；chat 请求里的本地 `file_id` 会惰性上传到 DeepSeek 并缓存远端 ID。
 - `backup` CLI 把数据目录打包成 ZIP，支持 `--backup-dir`（默认 `data/backups`）、`backup list` 和 `backup restore`；检测到 `chat.db-wal`/`chat.db-shm` 时拒绝，避免运行中备份或恢复。
-- `.gitlab-ci.yml` 手动发布流水线：Web、三平台 Go、各平台 PyInstaller GUI 与三个 ZIP；push/tag/MR 不自动运行。
 - DeepSeek SSE 代理、ASR/TTS 代理、API Key 校验；上游错误状态原样透传。
 - 前端认证门/登录页、服务端设置与 API Key、会话/附件适配，localStorage/IndexedDB 已移除。
 - Web UI 嵌入 Go 二进制；生产静态资源与登录页已在无头 Chrome 中验证。
@@ -439,4 +437,5 @@ chat-deepseek/
 
 未完成：
 
+- GitHub Actions 发布流水线。
 - 前端自动化测试（可选，需先确认测试框架）。

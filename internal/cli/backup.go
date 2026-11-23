@@ -11,8 +11,8 @@ import (
 
 	"golang.org/x/term"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/backup"
-	"gitlab.com/elegantgx/chat-deepseek/internal/config"
+	"github.com/elegantgx/chat-deepseek/internal/backup"
+	"github.com/elegantgx/chat-deepseek/internal/config"
 )
 
 func runBackup(args []string) error {

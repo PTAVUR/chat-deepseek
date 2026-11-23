@@ -1,4 +1,4 @@
-module gitlab.com/elegantgx/chat-deepseek
+module github.com/elegantgx/chat-deepseek
 
 go 1.27.4
 

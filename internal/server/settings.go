@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/settings"
+	"github.com/elegantgx/chat-deepseek/internal/settings"
 )
 
 type settingsResponse struct {

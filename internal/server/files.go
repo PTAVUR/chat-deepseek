@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/filestore"
+	"github.com/elegantgx/chat-deepseek/internal/filestore"
 )
 
 func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {

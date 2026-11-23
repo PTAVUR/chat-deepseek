@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"gitlab.com/elegantgx/chat-deepseek/internal/cli"
+	"github.com/elegantgx/chat-deepseek/internal/cli"
 )
 
 func main() {
