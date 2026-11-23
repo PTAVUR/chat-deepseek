@@ -128,9 +128,9 @@ jobs:
           install -m 0755 dist/darwin-arm64/chat-deepseek release/chat-deepseek
           ditto "$PWD/dist-gui/chat-deepseek-gui.app" release/chat-deepseek-gui.app
           cat > release/chat-deepseek-gui <<'SH'
-#!/bin/sh
-exec "$(dirname "$0")/chat-deepseek-gui.app/Contents/MacOS/chat-deepseek-gui" "$@"
-SH
+          #!/bin/sh
+          exec "$(dirname "$0")/chat-deepseek-gui.app/Contents/MacOS/chat-deepseek-gui" "$@"
+          SH
           chmod 0755 release/chat-deepseek-gui
           cp -R src release/src
           cp README.md LICENSE THIRD_PARTY_NOTICES.md release/
