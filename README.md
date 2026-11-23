@@ -31,7 +31,9 @@ CGO_ENABLED=0 go build -o chat-deepseek ./cmd/chat-deepseek
 --public-url <url>     对外访问地址（HTTPS 反代时用于 Secure Cookie）
 --api-origin <url>     DeepSeek API 地址，默认 https://api.deepseek.com
 --no-browser           启动时不自动打开浏览器
---output <file>        备份输出路径（backup）
+--backup-dir <dir>     备份地址，默认是 data/backups（backup）
+--output <file>        备份输出文件路径（backup，覆盖默认文件名）
+--yes                  跳过恢复确认（backup restore）
 --password-stdin       从标准输入读取密码（setup / user add / user reset-password）
 ```
 
@@ -49,11 +51,31 @@ gui/.venv/bin/pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r gui/req
 gui/.venv/bin/python gui/app.py
 ```
 
-Windows 用 `gui\.venv\Scripts\python gui\app.py`；更完整的命令见 [gui/README.md](gui/README.md)。需要 Python 3.10+ 和 `requirements.txt` 里的 PySide6。Linux 还缺 Qt 的 xcb 运行库时，按 `gui/README.md` 安装系统包。
+Windows 用 `gui\.venv\Scripts\python gui\app.py`；更完整的命令见 [gui/README.md](gui/README.md)。需要 Python 3.10+ 和 `requirements.txt` 里的 PySide6。Linux 还缺 Qt 的 xcb 运行库时，Debian/Ubuntu 可安装 `libxcb-cursor0`、`libxkbcommon-x11-0`、`libgl1`、`libegl1` 等系统包。
 
-`gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。设置页的二进制目录、数据目录和监听地址会按当前二进制目录与 `data/config.json` 预填，Public URL 对应 `--public-url`，API 地址对应 `--api-origin`；左下角的“恢复默认”回到二进制同级 `data/`、`127.0.0.1:8090` 和官方 API 地址。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里。
+`gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。设置页的二进制目录、数据目录、备份地址和监听地址会按当前二进制目录与 `data/config.json` 预填，Public URL 对应 `--public-url`，API 地址对应 `--api-origin`；左下角的“恢复默认”回到二进制同级 `data/`、`data/backups/`、`127.0.0.1:8090` 和官方 API 地址。数据卡片可以立即备份、查看备份记录并从记录中恢复；恢复前必须先停止服务。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里。
 
 关闭窗口会停止由它启动的服务；外部启动的 `chat-deepseek serve` 不会被它接管。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止服务是强制结束进程；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
+
+## 发布流水线
+
+`.gitlab-ci.yml` 定义手动触发的发布流水线：只允许在 GitLab 的 CI/CD → Pipelines → Run pipeline 中启动，push、标签、合并请求和定时任务都不会自动打包。
+
+手动运行后构建 Web 静态资源、三个平台的 Go 二进制和 PyInstaller GUI，最后生成：
+
+```text
+chat-deepseek-<标签或提交 SHA>-linux-amd64.zip
+chat-deepseek-<标签或提交 SHA>-windows-amd64.zip
+chat-deepseek-<标签或提交 SHA>-macos-arm64.zip
+```
+
+每个 ZIP 根目录都包含 `chat-deepseek`（Windows 为 `.exe`）、`chat-deepseek-gui`（Windows 为 `.exe`）、`src/`，以及 `README.md`、`LICENSE`、`THIRD_PARTY_NOTICES.md`。`chat-deepseek-gui` 需要和同目录的 `chat-deepseek` 一起使用。
+
+- Linux 用默认共享 Runner 和 Python 3.13 镜像构建。
+- Windows 用 GitLab.com 的 `saas-windows-medium-amd64`（Beta）。
+- macOS 用 `saas-macos-medium-m1`，需要 Premium/Ultimate 的 hosted runner；当前只产出 arm64，PyInstaller 不能从 Linux 交叉打包。使用自建 Runner 时把对应 job 的 `tags` 换成自己的标签。
+- macOS 包没有签名/公证，首次打开可能需要在 Finder 右键“打开”，或执行 `xattr -cr`。Windows 包也未签名，可能出现 SmartScreen 提示。
+- 首次运行需要 Runner 能访问 npm、PyPI、Go 模块代理和 Docker 镜像仓库。
 
 ## 账户
 
@@ -94,17 +116,32 @@ API Key 使用 AES-256-GCM 加密后写入 SQLite，`master.key` 单独保存；
 
 ## 备份
 
-备份前先停止服务。`backup` 会检查数据目录里是否存在 `chat.db-wal` 或 `chat.db-shm`，任一存在就拒绝备份，因为它们通常说明服务仍在运行。
+备份前先停止服务。`backup` 会检查数据目录里是否存在 `chat.db-wal` 或 `chat.db-shm`，任一存在就拒绝备份或恢复，因为它们通常说明服务仍在运行。
+
+备份地址默认是 `data/backups/`。可以用 `--backup-dir` 改到其他目录；备份地址不能是数据目录本身。
 
 ```sh
 # 默认写到 data/backups/chat-deepseek-<时间>.zip
 ./chat-deepseek backup
 
-# 也可以指定输出路径
+# 改备份地址
+./chat-deepseek backup --backup-dir /path/to/backups
+
+# 也可以指定单个输出文件（默认文件名之外的路径）
 ./chat-deepseek backup --output /path/to/chat-deepseek-backup.zip
+
+# 列出备份：NAME、SIZE、TIME
+./chat-deepseek backup list
+./chat-deepseek backup list --backup-dir /path/to/backups
+
+# 恢复指定的备份
+./chat-deepseek backup restore chat-deepseek-20261123-120220.zip
+./chat-deepseek backup restore --backup-dir /path/to/backups --yes chat-deepseek-20261123-120220.zip
 ```
 
-ZIP 内容相对于数据目录：`config.json`、`chat.db`、`master.key`、`files/`，不会把 `backups/` 自身打进去。恢复时先停止服务，移走现有 `data/`，再把 ZIP 解压到 `data/`，然后重新启动。
+ZIP 内容相对于数据目录：`config.json`、`chat.db`、`master.key`、`files/`，不会把 `backups/` 或自定义备份目录打进去。
+
+`backup restore` 会用备份覆盖这四项；备份里没有的项会被删除，以回到备份时的状态。恢复时会保留 `backups/`。交互式终端会要求输入 `yes` 确认；脚本或 GUI 使用 `--yes`。恢复完成后需要重新启动服务。
 
 ## 功能
 

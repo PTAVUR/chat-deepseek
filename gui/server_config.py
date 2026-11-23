@@ -15,6 +15,7 @@ def defaults(binary_dir: str | Path) -> dict[str, str]:
     return {
         "binary": str(directory),
         "data_dir": str(directory / "data"),
+        "backup_dir": str(directory / "data" / "backups"),
         "listen": DEFAULT_LISTEN,
         "public_url": "",
         "api_origin": DEFAULT_API_ORIGIN,

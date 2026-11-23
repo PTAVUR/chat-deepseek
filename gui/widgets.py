@@ -802,6 +802,96 @@ class UserRow(QFrame):
         painter.end()
 
 
+class BackupRow(QFrame):
+    """备份记录行：时间、文件名和大小，选中为整行长胶囊。"""
+
+    clicked = Signal(str)
+
+    HEIGHT = 58
+
+    def __init__(
+        self,
+        archive: parsing.Backup,
+        last: bool = False,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.archive = archive
+        self.name = archive.name
+        self._last = last
+        self._selected = False
+        self._hovered = False
+        self.setFixedHeight(self.HEIGHT)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(archive.name)
+        self.setAccessibleName(
+            f"{archive.time:%Y-%m-%d %H:%M:%S}，"
+            f"{archive.size}，{archive.name}"
+        )
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(18, 0, 18, 0)
+        row.setSpacing(12)
+
+        details = QWidget(self)
+        column = QVBoxLayout(details)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(2)
+        stamp = label(archive.time.strftime("%Y-%m-%d %H:%M:%S"), 13, 600)
+        column.addWidget(stamp)
+        filename = ElidedLabel(archive.name, 11, 400, "muted", details)
+        column.addWidget(filename)
+        row.addWidget(details, 1, Qt.AlignmentFlag.AlignVCenter)
+
+        size = label(archive.size, 11, 500, "muted", self)
+        row.addWidget(size, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        for child in (details, stamp, filename, size):
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def set_selected(self, selected: bool) -> None:
+        if selected != self._selected:
+            self._selected = selected
+            self.update()
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.name)
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        c = theme.colors()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._selected or self._hovered:
+            body = QRectF(self.rect()).adjusted(4, 0, -5, 0)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(
+                QColor(str(c["selected"] if self._selected else c["card_alt"]))
+            )
+            painter.drawPath(_capsule_path(body))
+            if self._selected:
+                border = QColor(str(c["primary"]))
+                border.setAlpha(62)
+                painter.setPen(QPen(border, 1))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPath(_capsule_path(body))
+        elif not self._last:
+            painter.setPen(QPen(QColor(str(c["border"])), 1))
+            painter.drawLine(18, self.height() - 1, self.width() - 19, self.height() - 1)
+        painter.end()
+
+
 class CheckBox(QAbstractButton):
     """18px 方形勾选框，选中时画对勾。"""
 

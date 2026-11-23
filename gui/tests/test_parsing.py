@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -46,6 +47,72 @@ class ParseBackupTest(unittest.TestCase):
 
     def test_missing(self) -> None:
         self.assertIsNone(parsing.parse_backup_path("something else"))
+
+
+class ParseBackupTimeTest(unittest.TestCase):
+    def test_default_name(self) -> None:
+        self.assertEqual(
+            parsing.parse_backup_time(
+                "/data/backups/chat-deepseek-20261123-120220.zip"
+            ),
+            datetime(2026, 11, 23, 12, 2, 20),
+        )
+
+    def test_windows_path(self) -> None:
+        self.assertEqual(
+            parsing.parse_backup_time(
+                r"C:\backups\chat-deepseek-20261123-120220.zip"
+            ),
+            datetime(2026, 11, 23, 12, 2, 20),
+        )
+
+    def test_renamed_backup(self) -> None:
+        self.assertEqual(
+            parsing.parse_backup_time("my-backup-20261123-120220.zip"),
+            datetime(2026, 11, 23, 12, 2, 20),
+        )
+
+    def test_invalid_or_missing_time(self) -> None:
+        self.assertIsNone(parsing.parse_backup_time("chat-deepseek.zip"))
+        self.assertIsNone(
+            parsing.parse_backup_time("chat-deepseek-20261399-999999.zip")
+        )
+        self.assertIsNone(
+            parsing.parse_backup_time("/backups/20261123-120220/manual.zip")
+        )
+
+
+class ParseBackupListTest(unittest.TestCase):
+    def test_rows(self) -> None:
+        text = (
+            "NAME\tSIZE\tTIME\n"
+            "chat-deepseek-20261123-120220.zip\t2.0 KB\t2026-11-23 12:02:20\n"
+            "manual.zip\t512 B\t2026-11-22 09:00:00\n"
+        )
+        backups = parsing.parse_backup_list(text)
+        self.assertEqual([item.name for item in backups], [
+            "chat-deepseek-20261123-120220.zip",
+            "manual.zip",
+        ])
+        self.assertEqual(backups[0].size, "2.0 KB")
+        self.assertEqual(backups[0].time, datetime(2026, 11, 23, 12, 2, 20))
+
+    def test_empty(self) -> None:
+        self.assertEqual(parsing.parse_backup_list(""), [])
+        self.assertEqual(parsing.parse_backup_list("NAME\tSIZE\tTIME\n"), [])
+
+    def test_bad_row(self) -> None:
+        with self.assertRaises(parsing.ParseError):
+            parsing.parse_backup_list("NAME\tSIZE\tTIME\nbad\n")
+        with self.assertRaises(parsing.ParseError):
+            parsing.parse_backup_list("a.zip\t2.0 KB\tnot-a-time\n")
+
+
+class FormatSizeTest(unittest.TestCase):
+    def test_units(self) -> None:
+        self.assertEqual(parsing.format_size(10), "10 B")
+        self.assertEqual(parsing.format_size(2048), "2.0 KB")
+        self.assertEqual(parsing.format_size(2 * 1024 * 1024), "2.0 MB")
 
 
 class ParseVersionTest(unittest.TestCase):
@@ -174,6 +241,17 @@ class ExplainFailureTest(unittest.TestCase):
             ).title,
             "数据目录还没有初始化",
         )
+
+    def test_backup_restore_errors(self) -> None:
+        cases = {
+            "错误： 备份不存在：gone.zip\n": "找不到备份",
+            "错误： 备份中没有 chat.db\n": "备份不完整",
+            "错误： 备份地址不能是数据目录本身\n": "备份地址无效",
+            "错误： 打开备份 bad.zip: zip: not a valid zip file\n": "备份文件损坏",
+        }
+        for text, title in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(parsing.explain_failure(text).title, title)
 
     def test_missing_binary(self) -> None:
         failure = parsing.explain_failure(

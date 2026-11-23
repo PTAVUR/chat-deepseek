@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,11 @@ def binary_in(directory: str | os.PathLike[str]) -> Path:
 def find_binary() -> str:
     """优先找仓库根目录的 chat-deepseek，其次找 PATH。"""
     name = binary_name()
+    if getattr(sys, "frozen", False):
+        # PyInstaller 包内 __file__ 在临时解压目录；发布包里的 CLI 与 GUI 同级。
+        candidate = Path(sys.executable).parent / name
+        if candidate.is_file():
+            return str(candidate)
     here = Path(__file__).resolve().parent
     for candidate in (here.parent / name, here.parent / "chat-deepseek"):
         if candidate.is_file():

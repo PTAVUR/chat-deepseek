@@ -16,6 +16,9 @@ class DefaultsTest(unittest.TestCase):
         values = server_config.defaults("/opt/chat-deepseek")
         self.assertEqual(values["binary"], "/opt/chat-deepseek")
         self.assertEqual(values["data_dir"], "/opt/chat-deepseek/data")
+        self.assertEqual(
+            values["backup_dir"], "/opt/chat-deepseek/data/backups"
+        )
         self.assertEqual(values["listen"], server_config.DEFAULT_LISTEN)
         self.assertEqual(values["api_origin"], server_config.DEFAULT_API_ORIGIN)
         self.assertEqual(values["public_url"], "")

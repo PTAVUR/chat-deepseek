@@ -60,7 +60,9 @@ func printUsage() {
   chat-deepseek                 首次运行 setup，之后启动服务并打开浏览器
   chat-deepseek setup           创建第一个 Owner
   chat-deepseek serve           启动 HTTP 服务
-  chat-deepseek backup          停止服务后把 data/ 打包成 ZIP
+  chat-deepseek backup          停止服务后把 data/ 打包成 ZIP（默认写到 data/backups/）
+  chat-deepseek backup list     列出备份地址里的 ZIP
+  chat-deepseek backup restore  恢复备份，覆盖 config.json、chat.db、master.key、files/
   chat-deepseek user ...        管理账户/组（仅服务端 CLI）
   chat-deepseek version         版本信息
 
@@ -70,7 +72,9 @@ func printUsage() {
   --public-url <url>            对外访问地址（HTTPS 反代时用于 Secure Cookie）
   --api-origin <url>            DeepSeek API 地址，默认 https://api.deepseek.com
   --no-browser                  不自动打开浏览器（serve）
-  --output <file>               备份输出路径（backup）
+  --backup-dir <dir>            备份地址，默认是 data/backups（backup）
+  --output <file>               备份输出文件路径（backup，覆盖默认文件名）
+  --yes                         跳过确认（backup restore）
   --password-stdin              从标准输入读取密码（setup/user add/user reset-password）
 
 首次使用：

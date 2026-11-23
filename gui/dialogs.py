@@ -10,14 +10,17 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 import cli
+import parsing
 import server_config
 import widgets
 
@@ -293,19 +296,112 @@ class MessageDialog(BaseDialog):
         self._root.addLayout(row)
 
 
+class BackupDialog(BaseDialog):
+    def __init__(
+        self,
+        parent: QWidget,
+        backup_dir: str,
+        archives: list[parsing.Backup],
+    ) -> None:
+        super().__init__(parent, "备份记录", 640, 500)
+        self.selected: str | None = None
+        self._description(f"备份地址：{backup_dir}")
+        hint = widgets.label(
+            "恢复会覆盖 chat.db、config.json、master.key 和 files/，请先停止服务。",
+            12,
+            400,
+            "muted",
+        )
+        hint.setWordWrap(True)
+        self._root.addWidget(hint)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            if archives
+            else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.list_host = QWidget()
+        list_layout = QVBoxLayout(self.list_host)
+        list_layout.setContentsMargins(0, 2, 0, 0)
+        list_layout.setSpacing(0)
+        self.rows: list[widgets.BackupRow] = []
+        if archives:
+            for index, archive in enumerate(archives):
+                row = widgets.BackupRow(
+                    archive, last=index == len(archives) - 1
+                )
+                row.clicked.connect(self._select)
+                list_layout.addWidget(row)
+                self.rows.append(row)
+            list_layout.addStretch(1)
+        else:
+            list_layout.addStretch(1)
+            empty = widgets.label("还没有备份", 14, 600)
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            list_layout.addWidget(empty)
+            empty_hint = widgets.label(
+                "返回主界面点击“立即备份”创建第一个备份。", 12, 400, "muted"
+            )
+            empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            list_layout.addWidget(empty_hint)
+            list_layout.addStretch(1)
+        self.scroll.setWidget(self.list_host)
+        self._root.addWidget(self.scroll, 1)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 4, 0, 0)
+        row.setSpacing(8)
+        row.addStretch(1)
+        close = widgets.button("关闭", "secondary", height=36)
+        close.setMinimumWidth(88)
+        close.setDefault(True)
+        close.clicked.connect(self.reject)
+        row.addWidget(close)
+        self.restore_button = widgets.button(
+            "恢复所选", "danger", height=36
+        )
+        self.restore_button.setMinimumWidth(96)
+        self.restore_button.setEnabled(False)
+        self.restore_button.clicked.connect(self._ok)
+        row.addWidget(self.restore_button)
+        self._root.addLayout(row)
+
+    def _select(self, name: str) -> None:
+        if self.selected == name:
+            return
+        self.selected = name
+        for row in self.rows:
+            row.set_selected(row.name == name)
+        self.restore_button.setEnabled(True)
+
+    def _ok(self) -> None:
+        if self.selected is None:
+            return
+        self.value = self.selected
+        self.accept()
+
+
 class SettingsDialog(BaseDialog):
     def __init__(
         self,
         parent: QWidget,
         binary: str,
         data_dir: str,
+        backup_dir: str,
         listen: str,
         public_url: str,
         api_origin: str,
         defaults: dict[str, str],
     ) -> None:
-        super().__init__(parent, "设置", 720, 430)
+        super().__init__(parent, "设置", 720, 480)
         self.defaults = defaults
+        self._initial_data_dir = data_dir
         self._description("这些设置只作用于当前窗口，不会写入配置文件。")
 
         grid = QGridLayout()
@@ -318,6 +414,8 @@ class SettingsDialog(BaseDialog):
         self.binary.setText(binary)
         self.data_dir = _field("数据目录")
         self.data_dir.setText(data_dir)
+        self.backup_dir = _field("备份地址")
+        self.backup_dir.setText(backup_dir)
         self.listen = _field("监听地址")
         self.listen.setText(listen)
         self.public_url = _field("未设置")
@@ -328,6 +426,7 @@ class SettingsDialog(BaseDialog):
         rows = (
             ("二进制目录", self.binary, True),
             ("数据目录", self.data_dir, True),
+            ("备份地址", self.backup_dir, True),
             ("监听地址", self.listen, False),
             ("Public URL", self.public_url, False),
             ("API 地址", self.api_origin, False),
@@ -382,6 +481,7 @@ class SettingsDialog(BaseDialog):
     def _restore_defaults(self) -> None:
         self.binary.setText(self.defaults["binary"])
         self.data_dir.setText(self.defaults["data_dir"])
+        self.backup_dir.setText(self.defaults["backup_dir"])
         self.listen.setText(self.defaults["listen"])
         self.public_url.setText(self.defaults["public_url"])
         self.api_origin.setText(self.defaults["api_origin"])
@@ -390,6 +490,7 @@ class SettingsDialog(BaseDialog):
     def _ok(self) -> None:
         binary_dir = self.binary.text().strip()
         data_dir = self.data_dir.text().strip()
+        backup_dir = self.backup_dir.text().strip()
         listen = self.listen.text().strip()
         api_origin = self.api_origin.text().strip()
         if not binary_dir:
@@ -401,12 +502,20 @@ class SettingsDialog(BaseDialog):
         if not data_dir:
             self._show_error("数据目录不能为空")
             return
+        if not backup_dir:
+            self._show_error("备份地址不能为空")
+            return
         if not listen:
             self._show_error("监听地址不能为空")
             return
+        old_data = Path(self._initial_data_dir).expanduser()
+        new_data = Path(data_dir).expanduser()
+        if backup_dir == str(old_data / "backups") and new_data != old_data:
+            backup_dir = str(new_data / "backups")
         self.value = {
             "binary": binary_dir,
             "data_dir": data_dir,
+            "backup_dir": backup_dir,
             "listen": listen,
             "public_url": self.public_url.text().strip(),
             "api_origin": api_origin or server_config.DEFAULT_API_ORIGIN,

@@ -24,12 +24,13 @@
 - 测试：Go 单元/接口测试覆盖 auth、account、database、config、secret、settings、chat、filestore、backup、deepseek、server；`go test ./...` 通过。前端没有自动化测试。
 - 手动端到端：已用临时数据目录 + dev 代理走通登录、退出、设置/API Key、会话创建/加载/刷新持久化、附件上传和 SSE mock 回复；侧边栏 Logo、头像菜单、Deepseek 标题与 favicon 已在无头 Chrome 验证（桌面与移动端），登录页明暗两套样式、DM Sans 字标和首页鲸鱼也已核对；系统设置已按官方左右分栏与行式列表重做，账户资料保存后就地更新且不关闭弹窗；桌面与移动端均已在无头 Chrome 核对；删除会话、清空全部会话和移除草稿附件后，`files` 表、磁盘原件和空用户目录均已核对清理；历史导出后重新导入会重映射附件 ID 并原子替换会话；`backup` 在服务运行时拒绝、停止后生成 ZIP。
 - 代码规模：`src` 约 21k 行（含 CSS Modules）；最大文件是 `src/services/chat/store.ts`（约 1.1k 行）。
-- GUI：`gui/app.py` 是 PySide6（Qt 6）管理界面，`parsing.py` 解析 `user list` / `backup` / `serve` / `version` 输出，`dialogs.py` 提供 Qt 输入、确认和路径选择，`widgets.py` 自绘卡片、按钮、输入框、状态点、组标签与成员行；`fonts.py` 优先系统 UI 字体，`assets/whale.svg` 是 CC0 的鲸鱼标志。窗口标题栏、边框和圆角全部交给系统（Windows x/□/-，GNOME 关闭按钮，macOS 交通灯），不再自绘窗口外壳。账户列表是两行成员行（头像、用户名、组标签、状态点），悬停/选中为长胶囊，选中头像变实心蓝，底部信息栏显示“已选择 / 取消选择”和操作。解析器把服务运行中、端口占用、最后一个 Owner、账户不存在、密码不合规等已知失败翻译成可操作提示，只有无法识别时才显示“未知错误”和原始输出；解析器与配置读取共 31 个单元测试通过，成员列表、服务启停、备份和账户增删改已在临时数据目录核对。
+- GUI：`gui/app.py` 是 PySide6（Qt 6）管理界面，`parsing.py` 解析 `user list` / `backup list` / `serve` / `version` 输出，`dialogs.py` 提供 Qt 输入、确认和路径选择，`widgets.py` 自绘卡片、按钮、输入框、状态点、组标签与成员行；`fonts.py` 优先系统 UI 字体，`assets/whale.svg` 是 CC0 的鲸鱼标志。窗口标题栏、边框和圆角全部交给系统（Windows x/□/-，GNOME 关闭按钮，macOS 交通灯），不再自绘窗口外壳。账户列表是两行成员行（头像、用户名、组标签、状态点），悬停/选中为长胶囊，选中头像变实心蓝，底部信息栏显示“已选择 / 取消选择”和操作；“备份记录…”列出备份并可恢复。解析器把服务运行中、端口占用、最后一个 Owner、账户不存在、密码不合规等已知失败翻译成可操作提示，只有无法识别时才显示“未知错误”和原始输出；解析器与配置读取共 40 个单元测试通过，成员列表、服务启停、备份和账户增删改已在临时数据目录核对。
 - 源码中没有 `TODO` / `FIXME` 标记。
 
 ## 3. 目录与关键文件
 
 ```text
+.gitlab-ci.yml               手动触发的多平台发布流水线
 src/
   main.tsx                    启动：setupTheme、ensureKatex、createRoot(<App/>)
   app/                        应用外壳、主题、视口与全局样式
@@ -88,7 +89,7 @@ internal/
   settings/                   每用户偏好与加密 API Key
   chat/                       会话 JSON、版本锁、永久删除
   filestore/                  附件原件与元数据
-  backup/                     停止服务后把数据目录打包成 ZIP
+  backup/                     数据目录 ZIP 备份、列表与恢复
   deepseek/                   Files / Messages / ASR / TTS 上游客户端
   server/                     /api/v1 认证、设置、会话、文件、SSE/语音代理与静态 UI
   webui/                      go:embed 的 Web 构建产物（dist/.gitkeep 占位）
@@ -259,11 +260,11 @@ pnpm dev
 5. 思考 / 搜索开关、来源面板、链接阅读、引用角标。
 6. 移动端布局（<768px）、键盘弹出；历史导入导出、删除全部会话。
 7. 生产二进制：`pnpm build` 后 `go build -o chat-deepseek ./cmd/chat-deepseek`，访问 `/` 能看到 UI 和静态资源。
-8. 停止服务后 `chat-deepseek backup` 生成 ZIP；服务运行、存在 `chat.db-wal` 或 `chat.db-shm` 时拒绝备份。
+8. 停止服务后 `chat-deepseek backup` 生成 ZIP，`backup list` 能看到，`backup restore --yes` 能覆盖 `config.json`、`chat.db`、`master.key`、`files/`；服务运行、存在 `chat.db-wal` 或 `chat.db-shm` 时拒绝备份和恢复；自定义 `--backup-dir` 正常工作。
 9. `gui/.venv/bin/python gui/app.py` 用临时数据目录点击初始化、启动/停止、成员列表、账户操作和备份；确认密码不出现在命令行与输出。
 10. `gui/.venv/bin/python -m unittest discover -s gui/tests` 通过。
 
-当前不配置 GitLab CI；上游遗留的 GitHub Pages workflow 只跑前端门禁，Go 测试/`go vet` 在本地执行。前端新增测试框架前先与用户确认。
+GitLab 发布流水线在 `.gitlab-ci.yml`，只接受 UI 手动 Run pipeline（`CI_PIPELINE_SOURCE == "web"`）；push、tag、MR、schedule 都不会创建流水线。手动运行后构建 Web、三平台 Go（Linux 上交叉编译）与 PyInstaller GUI（各平台原生），产出 linux-amd64、windows-amd64、macos-arm64 三个 ZIP，根目录都包含 `chat-deepseek`、`chat-deepseek-gui`、`src/` 和三份文档。Windows 使用 `saas-windows-medium-amd64`，macOS 使用 `saas-macos-medium-m1`（需要 Premium/Ultimate）；自建 Runner 要替换 tags。上游遗留的 GitHub Pages workflow 只跑前端门禁，Go 测试/`go vet` 在本地执行。前端新增测试框架前先与用户确认。
 
 ## 9. 高风险点（改 store / 数据 / 流式时重点看）
 
@@ -329,8 +330,9 @@ pnpm dev
 - **浏览器存储**：v1 已移除 localStorage/IndexedDB，旧浏览器数据不会自动迁移到服务端；需要保留历史时先在旧版本导出 ZIP，再在新版导入。
 - **README 语言**：只保留中文 `README.md`，英文版已删除；README 保持用户文档定位，试错与决策记录放这里。
 - **UI 文案与视觉**：标题、`appName` 为 `Deepseek`；字标使用 DM Sans 700（OFL，官方界面字体；官方字标本身是定制字形，不能公开使用）。侧边栏和登录页使用 Simple Icons 的 DeepSeek 鲸鱼标志（CC0-1.0）；设置入口是头像 + 用户名菜单，右侧是 `...`；登录页跟随明暗主题（亮色白底 / 暗色官方风格），首页问候语左侧有鲸鱼；系统设置采用官方左右分栏与行式列表，账户资料保存后就地更新，弹窗不关闭、不整页刷新。第三方来源与商标说明见 `THIRD_PARTY_NOTICES.md`。
-- **GUI 管理界面**：`gui/app.py` 是 Python 3.10+/PySide6 界面，所有操作都拼成 `chat-deepseek` 子命令，不写 `data/`；默认参数从 `data/config.json` 读取，密码通过 `--password-stdin` 走 stdin。`gui/.venv` 由 `python3 -m venv` 创建、已由 `gui/.gitignore` 忽略，依赖从清华源安装。界面把 `user list` 解析成成员列表，把 `backup` 解析成路径/大小，把 `serve` 日志解析成状态；失败时把“服务运行中”“端口占用”“最后一个 Owner”“账户不存在”“密码不合规”等已知条件翻译成可操作提示，解析不了才显示“未知错误”和原始输出。CLI 参数、退出码或中文输出变化时要同步改 `parsing.py` 和测试。设置页是二进制目录、数据目录、监听地址、Public URL、API 地址，默认值按二进制目录和 `config.json` 预填，左下角“恢复默认”回到内置默认；保存只作用于本窗口后续命令，不写 `config.json`。
+- **GUI 管理界面**：`gui/app.py` 是 Python 3.10+/PySide6 界面，所有操作都拼成 `chat-deepseek` 子命令，不写 `data/`；默认参数从 `data/config.json` 读取，密码通过 `--password-stdin` 走 stdin。`gui/.venv` 由 `python3 -m venv` 创建、已由 `gui/.gitignore` 忽略，依赖从清华源安装。界面把 `user list` 解析成成员列表，把 `backup list` 解析成备份记录（时间/大小/文件名），把 `serve` 日志解析成状态；失败时把“服务运行中”“端口占用”“最后一个 Owner”“账户不存在”“密码不合规”等已知条件翻译成可操作提示，解析不了才显示“未知错误”和原始输出。CLI 参数、退出码或中文输出变化时要同步改 `parsing.py` 和测试。设置页是二进制目录、数据目录、备份地址、监听地址、Public URL、API 地址，默认值按二进制目录和 `config.json` 预填，左下角“恢复默认”回到内置默认；保存只作用于本窗口后续命令，不写 `config.json`。启动时自动读取 `backup list` 并在信息栏显示最近一条；数据卡片的“备份记录…”再次读取列表，恢复前确认并调用 `backup restore --yes`。
 - **GUI 视觉**：窗口标题栏、边框和圆角全部使用系统原生（Windows x/□/-，GNOME 关闭按钮，macOS 交通灯），不再自绘、不再 frameless、不再设置透明窗口或自定义圆角；对话框也用原生标题栏，内容高度预留标题栏。不设置 `applicationDisplayName`，标题只有“设置”“命令行提示”等。账户列表是 60px 两行成员行：36px 头像、用户名、Owner/Admin/User 组标签、右侧状态点；悬停/选中为长胶囊（高度贴满行，不再和上一条分隔线留缝），选中头像变实心蓝；底部信息栏显示“已选择 / 取消选择”和操作。卡片 32px，按钮/输入框/开关用胶囊端（20px），阴影自绘并关闭子像素抗锯齿。界面优先使用 Microsoft YaHei UI / PingFang SC / Noto Sans CJK SC，字号整体大一档。启动时用户列表与版本并行加载；Windows 子进程用 `CREATE_NO_WINDOW` 避免控制台闪窗。Windows 上停止服务是强制结束；关闭 GUI 只停止由它启动的服务，不接管外部进程。
+- **GitLab 发布流水线**：`.gitlab-ci.yml` 只允许 UI 手动触发（`workflow.rules` 限定 `CI_PIPELINE_SOURCE == "web"`），push/tag/MR/schedule 不创建流水线。job 分 Web（Node + pnpm）、Go（golang:1.27，Linux 上交叉编译 linux-amd64 / windows-amd64 / darwin-arm64，`-trimpath -ldflags`）、三个 GUI（Python + PyInstaller 6.22.3 单文件；Windows 用 hosted Windows，macOS 用 hosted M1，macOS 不加 `--windowed` 以保持 `chat-deepseek-gui` 单文件）和三个 package job（ZIP 根目录放两个二进制、`src/` 与三份文档）。`build-go` 通过 `needs` 拿 Web 构建产物；`chat-deepseek-gui` 和 `chat-deepseek` 必须同级，frozen 模式从 `sys.executable` 所在目录找 CLI。Linux/PyInstaller 本机已验证；Windows/macOS 与流水线本身尚未在 GitLab Runner 上实际运行。
 - **嵌入 UI**：Go 二进制只包含编译时 `internal/webui/dist/` 里的内容；仓库只提交 `.gitkeep`。忘记 `pnpm build` 会得到占位页，不是运行时找不到文件。
 - **GitLab 保护分支**：`feature/dev` 在 GitLab 上被保护，`git push --force-with-lease` 会被拒绝（protected branch）。不要重写已推送的提交；需要修历史时先在 GitLab 取消保护，或换新分支。
 - **Go 缓存**：本机默认 `GOPATH`/模块缓存位于 workspace 外，DSH 沙箱下只读。构建/测试需把 `GOPATH`、`GOMODCACHE`、`GOCACHE` 指到 workspace 的 `tmp/`（已 gitignore）；例如 `export GOPATH=$PWD/tmp/gopath GOMODCACHE=$PWD/tmp/gopath/pkg/mod GOCACHE=$PWD/tmp/go-build`。`/tmp` 在部分工具调用间不保留，不要依赖它。
@@ -428,7 +430,8 @@ chat-deepseek/
 - `master.key` 与 AES-256-GCM；每用户偏好/API Key API，Key 不出服务端、不写日志。
 - 会话 CRUD、`version` 乐观锁、永久删除，按用户隔离；历史导入经 `POST /import` 原子替换。
 - 附件上传/下载/永久删除/批量清理，按用户目录保存；chat 请求里的本地 `file_id` 会惰性上传到 DeepSeek 并缓存远端 ID。
-- `backup` CLI 把数据目录打包成 ZIP；检测到 `chat.db-wal`/`chat.db-shm` 时拒绝，避免运行中备份。
+- `backup` CLI 把数据目录打包成 ZIP，支持 `--backup-dir`（默认 `data/backups`）、`backup list` 和 `backup restore`；检测到 `chat.db-wal`/`chat.db-shm` 时拒绝，避免运行中备份或恢复。
+- `.gitlab-ci.yml` 手动发布流水线：Web、三平台 Go、各平台 PyInstaller GUI 与三个 ZIP；push/tag/MR 不自动运行。
 - DeepSeek SSE 代理、ASR/TTS 代理、API Key 校验；上游错误状态原样透传。
 - 前端认证门/登录页、服务端设置与 API Key、会话/附件适配，localStorage/IndexedDB 已移除。
 - Web UI 嵌入 Go 二进制；生产静态资源与登录页已在无头 Chrome 中验证。

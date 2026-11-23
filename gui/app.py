@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Callable
 
 GUI_DIR = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False):
+    # PyInstaller 单文件模式把资源解压到 sys._MEIPASS；assets/ 也放在这一层。
+    GUI_DIR = Path(getattr(sys, "_MEIPASS", GUI_DIR))
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
 
@@ -70,6 +73,7 @@ class MainWindow(QMainWindow):
 
         self.binary_dir = initial["binary"]
         self.data_dir = initial["data_dir"]
+        self.backup_dir = initial["backup_dir"]
         self.listen = initial["listen"]
         self.public_url = initial["public_url"]
         self.api_origin = initial["api_origin"]
@@ -86,6 +90,8 @@ class MainWindow(QMainWindow):
         self.auto_opened = False
         self.busy = False
         self.users_loading = False
+        self.backups_loading = False
+        self.backups: list[parsing.Backup] = []
         self.closing = False
         self.inbox: queue.Queue[Callable[[], None]] = queue.Queue()
 
@@ -301,6 +307,12 @@ class MainWindow(QMainWindow):
         self.backup_button.setMinimumWidth(92)
         self.backup_button.clicked.connect(self.backup_default)
         bar.addWidget(self.backup_button)
+        self.backup_records_button = widgets.button(
+            "备份记录…", "secondary", height=32, small=True
+        )
+        self.backup_records_button.setMinimumWidth(96)
+        self.backup_records_button.clicked.connect(self.manage_backups)
+        bar.addWidget(self.backup_records_button)
         self.backup_as_button = widgets.button(
             "备份到…", "secondary", height=32, small=True
         )
@@ -436,15 +448,19 @@ class MainWindow(QMainWindow):
             raise RuntimeError("请选择 chat-deepseek 所在的二进制目录")
         path = Path(value).expanduser()
         if path.is_file():
-            return str(path)
+            return str(path.resolve())
         candidate = cli.binary_in(path)
         if candidate.is_file():
-            return str(candidate)
+            return str(candidate.resolve())
         raise RuntimeError(f"目录里没有 {cli.binary_name()}：{path}")
 
     def _data_args(self) -> list[str]:
         value = os.path.expanduser(self.data_dir.strip())
         return ["--data-dir", value] if value else []
+
+    def _backup_args(self) -> list[str]:
+        value = os.path.expanduser(self.backup_dir.strip())
+        return ["--backup-dir", value] if value else []
 
     def _listen_args(self) -> list[str]:
         value = self.listen.strip()
@@ -489,6 +505,7 @@ class MainWindow(QMainWindow):
             return
         self.refresh_users()
         self._load_version()
+        self.refresh_backups()
 
     def _load_version(self) -> None:
         try:
@@ -690,6 +707,7 @@ class MainWindow(QMainWindow):
         self.add_button.setEnabled(not busy and bool(self.users))
         self.settings_button.setEnabled(not busy)
         self.backup_button.setEnabled(not busy)
+        self.backup_records_button.setEnabled(not busy)
         self.backup_as_button.setEnabled(not busy)
         self.help_button.setEnabled(not busy)
         if getattr(self, "setup_button", None) is not None:
@@ -912,14 +930,19 @@ class MainWindow(QMainWindow):
     # ---- 备份与帮助 ---------------------------------------------------
 
     def backup_default(self) -> None:
-        self._execute(["backup", *self._data_args()], on_success=self._after_backup)
+        self._execute(
+            ["backup", *self._data_args(), *self._backup_args()],
+            on_success=self._after_backup,
+        )
 
     def backup_as(self) -> None:
         try:
             root = self._data_root()
         except RuntimeError:
             root = Path.home()
-        initial = root / "backups"
+        initial = Path(
+            os.path.expanduser(self.backup_dir.strip() or str(root / "backups"))
+        )
         if not initial.is_dir():
             initial = root if root.is_dir() else Path.home()
         name = f"chat-deepseek-{time.strftime('%Y%m%d-%H%M%S')}.zip"
@@ -927,9 +950,124 @@ class MainWindow(QMainWindow):
         if target is None:
             return
         self._execute(
-            ["backup", "--output", target, *self._data_args()],
+            [
+                "backup",
+                "--output",
+                target,
+                *self._data_args(),
+                *self._backup_args(),
+            ],
             on_success=self._after_backup,
         )
+
+    def refresh_backups(self) -> None:
+        if self.backups_loading or self.closing:
+            return
+        try:
+            binary = self._binary()
+        except RuntimeError:
+            return
+        self.backups_loading = True
+        args = ["backup", "list", *self._data_args(), *self._backup_args()]
+
+        def work() -> None:
+            try:
+                result = cli.run_command(binary, args)
+            except Exception as exc:  # noqa: BLE001 - 直接呈现在信息栏
+                result = cli.CommandResult(tuple(args), 1, "", str(exc))
+            self._post(lambda: self._apply_backup_summary(result))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_backup_summary(self, result: cli.CommandResult) -> None:
+        if self.closing:
+            return
+        self.backups_loading = False
+        if not result.ok:
+            failure = parsing.explain_failure(
+                result.stderr, result.stdout, result.args, result.code
+            )
+            self.backup_label.setText("无法读取备份记录")
+            self.backup_label.setToolTip(failure.message)
+            return
+        try:
+            archives = parsing.parse_backup_list(result.stdout)
+        except parsing.ParseError:
+            self.backup_label.setText("无法读取备份记录")
+            self.backup_label.setToolTip("备份列表格式无法识别")
+            return
+        self.backups = archives
+        if archives:
+            latest = archives[0]
+            self.backup_label.setText(
+                f"最近备份：{latest.time:%Y-%m-%d %H:%M:%S}"
+                f"（{latest.size}）"
+            )
+        else:
+            self.backup_label.setText("还没有备份记录")
+
+    def manage_backups(self) -> None:
+        self._execute(
+            ["backup", "list", *self._data_args(), *self._backup_args()],
+            on_success=self._open_backup_records,
+        )
+
+    def _open_backup_records(self, result: cli.CommandResult) -> None:
+        try:
+            archives = parsing.parse_backup_list(result.stdout)
+        except parsing.ParseError as exc:
+            failure = parsing.unknown_output(
+                "无法识别 chat-deepseek 返回的备份列表。",
+                result.stdout,
+                result.stderr,
+            )
+            details = failure.details or ""
+            self._error(
+                failure.title,
+                failure.message,
+                f"{exc}\n\n{details}" if details else str(exc),
+            )
+            return
+        self.backups = archives
+        if archives:
+            latest = archives[0]
+            self.backup_label.setText(
+                f"最近备份：{latest.time:%Y-%m-%d %H:%M:%S}"
+                f"（{latest.size}）"
+            )
+        dialog = dialogs.BackupDialog(self, self.backup_dir, archives)
+        dialog.exec_modal()
+        if not isinstance(dialog.value, str):
+            return
+        name = dialog.value
+        if not dialogs.ask_confirm(
+            self,
+            "恢复备份",
+            f"用备份 {name} 覆盖当前数据？\n\n"
+            "会覆盖 chat.db、config.json、master.key 和 files/；"
+            "请确认服务已经停止。",
+            danger=True,
+        ):
+            return
+        self._execute(
+            [
+                "backup",
+                "restore",
+                "--yes",
+                *self._data_args(),
+                *self._backup_args(),
+                name,
+            ],
+            on_success=lambda _result: self._after_restore(name),
+        )
+
+    def _after_restore(self, name: str) -> None:
+        self.selected = None
+        stamp = parsing.parse_backup_time(name)
+        label = stamp.strftime("%Y-%m-%d %H:%M:%S") if stamp else name
+        self.backup_label.setText(f"最近恢复：{label}")
+        self._toast("备份已恢复，请重新启动服务")
+        self.refresh_users()
 
     def _after_backup(self, result: cli.CommandResult) -> None:
         path = parsing.parse_backup_path(result.stdout)
@@ -942,17 +1080,13 @@ class MainWindow(QMainWindow):
             self._error("无法识别备份结果", failure.message, failure.details)
             return
         target = Path(path)
+        stamp = parsing.parse_backup_time(path)
+        label = stamp.strftime("%Y-%m-%d %H:%M:%S") if stamp else str(target)
         if target.is_file():
-            size = target.stat().st_size
-            if size >= 1024 * 1024:
-                human = f"{size / 1024 / 1024:.1f} MB"
-            elif size >= 1024:
-                human = f"{size / 1024:.1f} KB"
-            else:
-                human = f"{size} B"
-            text = f"最近备份：{target}（{human}）"
+            human = parsing.format_size(target.stat().st_size)
+            text = f"最近备份：{label}（{human}）"
         else:
-            text = f"最近备份：{target}"
+            text = f"最近备份：{label}"
         self.backup_label.setText(text)
         self._toast("备份完成")
 
@@ -971,6 +1105,7 @@ class MainWindow(QMainWindow):
             self,
             self.binary_dir,
             self.data_dir,
+            self.backup_dir,
             self.listen,
             self.public_url,
             self.api_origin,
@@ -982,6 +1117,7 @@ class MainWindow(QMainWindow):
         value = dialog.value
         self.binary_dir = str(value["binary"])
         self.data_dir = str(value["data_dir"])
+        self.backup_dir = str(value["backup_dir"])
         self.listen = str(value["listen"])
         self.public_url = str(value["public_url"])
         self.api_origin = str(value["api_origin"])
@@ -993,6 +1129,7 @@ class MainWindow(QMainWindow):
             self._toast("设置已更新")
         self._load_version()
         self.refresh_users()
+        self.refresh_backups()
 
     # ---- 关闭 ---------------------------------------------------------
 

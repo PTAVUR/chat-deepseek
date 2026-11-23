@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 
 
 class ParseError(ValueError):
@@ -43,6 +44,13 @@ class User:
     @property
     def status_text(self) -> str:
         return "已禁用" if self.disabled else "正常"
+
+
+@dataclass(frozen=True)
+class Backup:
+    name: str
+    size: str
+    time: datetime
 
 
 @dataclass(frozen=True)
@@ -82,6 +90,51 @@ def parse_backup_path(text: str) -> str | None:
     """从 `备份已写入 <path>` 取出路径；没有该行时返回 None。"""
     match = re.search(r"备份已写入\s+(.+?)\s*$", text, re.MULTILINE)
     return match.group(1).strip() if match else None
+
+
+def parse_backup_time(path: str) -> datetime | None:
+    """从备份文件名里取 `YYYYMMDD-HHMMSS`；不在文件名里或不合法时返回 None。
+
+    只看最后一段文件名，避免把上级目录里的数字误当成备份时间。
+    """
+    name = re.split(r"[\\/]", path)[-1]
+    match = re.search(r"\d{8}-\d{6}", name)
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match.group(0), "%Y%m%d-%H%M%S")
+    except ValueError:
+        return None
+
+
+def parse_backup_list(text: str) -> list[Backup]:
+    """解析 `backup list` 的 TSV 输出。"""
+    backups: list[Backup] = []
+    for line in text.splitlines():
+        line = line.rstrip("\r")
+        if not line.strip() or line == "NAME\tSIZE\tTIME":
+            continue
+        parts = line.split("\t")
+        if len(parts) != 3:
+            raise ParseError(f"无法解析备份行：{line}")
+        name, size_text, time_text = parts
+        try:
+            stamp = datetime.strptime(time_text, "%Y-%m-%d %H:%M:%S")
+        except ValueError as exc:
+            raise ParseError(f"无法解析备份行：{line}") from exc
+        if not name or not size_text:
+            raise ParseError(f"无法解析备份行：{line}")
+        backups.append(Backup(name=name, size=size_text, time=stamp))
+    return backups
+
+
+def format_size(size: int) -> str:
+    """把字节数格式化成习惯的 KB/MB。"""
+    if size >= 1024 * 1024:
+        return f"{size / 1024 / 1024:.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size} B"
 
 
 def parse_version(text: str) -> tuple[str, str] | None:
@@ -264,7 +317,7 @@ def explain_failure(
             "这个数据目录里已经有 Owner。可以直接添加账户，或换一个数据目录。",
         )
 
-    if "数据目录中没有 chat.db" in combined or "没有 chat.db" in combined:
+    if "数据目录中没有 chat.db" in combined:
         return Failure(
             "数据目录还没有初始化",
             "这个目录里没有 chat.db。请先创建 Owner 账户，或检查设置里的数据目录。",
@@ -274,6 +327,47 @@ def explain_failure(
         return Failure(
             "备份路径无效",
             "备份文件不能覆盖数据目录里的 chat.db、master.key 或 config.json，请换一个路径。",
+        )
+
+    if "备份地址不能是数据目录本身" in combined:
+        return Failure(
+            "备份地址无效",
+            "备份地址不能和数据目录相同，请在设置里换一个目录。",
+        )
+
+    if "not a directory" in lowered or "不是目录" in combined:
+        return Failure(
+            "备份地址无效",
+            "备份地址应该是一个目录，请在设置里检查。",
+        )
+
+    if "备份不存在" in combined:
+        return Failure(
+            "找不到备份",
+            "备份可能已经被移动或删除，刷新备份记录后再试。",
+        )
+
+    if "备份不是文件" in combined:
+        return Failure("备份不可用", "这个路径不是 ZIP 文件，请选择具体的备份。")
+
+    if "备份中没有 chat.db" in combined:
+        return Failure(
+            "备份不完整",
+            "这个备份里没有 chat.db，无法恢复。",
+        )
+
+    if "备份包含非法路径" in combined or "备份包含不支持的文件类型" in combined:
+        return Failure(
+            "备份不可用",
+            "备份内容不合法，已停止恢复；当前数据没有被改动。",
+        )
+
+    if "打开备份" in combined and (
+        "zip" in lowered or "not a valid" in lowered or "invalid" in lowered
+    ):
+        return Failure(
+            "备份文件损坏",
+            "无法读取这个 ZIP，换一个备份再试。",
         )
 
     if "parse config" in lowered or "读取 config" in combined:

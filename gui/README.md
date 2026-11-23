@@ -30,7 +30,7 @@ gui\.venv\Scripts\python gui\app.py
 ```text
 app.py          主窗口、状态和操作流程
 cli.py          子进程执行与 serve 进程管理
-parsing.py      解析 user list / backup / serve / version 输出
+parsing.py      解析 user list / backup list / serve / version 输出
 server_config.py 读取 config.json 与默认参数
 dialogs.py      Qt 输入、确认、路径选择和设置对话框
 widgets.py      自绘卡片、按钮、输入框、状态点、组标签与成员行
@@ -50,9 +50,11 @@ gui/.venv/bin/python -m unittest discover -s gui/tests -v
 
 - 密码通过 `--password-stdin` 传给子进程，不出现在命令行参数和输出里。
 - GUI 直接解析 CLI 的中文输出；CLI 提示或表格格式变化时，改 `parsing.py` 并补测试。已知失败条件（服务运行中、端口占用、最后一个 Owner、账户不存在、密码不合规等）会翻译成可操作的提示；只有完全识别不了时才显示“未知错误”和原始输出。
+- 备份地址默认是数据目录下的 `backups/`，可在设置里改。启动时会自动读取备份列表，信息栏显示最近一条；备份完成后也优先显示文件名里的时间（`chat-deepseek-YYYYMMDD-HHMMSS.zip`），名称里没有可解析的时间时显示完整路径。文件存在时同时显示大小。
+- “备份记录…”读取 `backup list`，可以查看时间、文件名和大小，并恢复选中的备份；恢复前先停止服务，会覆盖 `chat.db`、`config.json`、`master.key` 和 `files/`。
 - 关闭窗口会停止由本窗口启动的 `serve`；外部启动的进程不会被接管。
 - Windows 上停止服务是强制结束进程；同一个数据目录同时只能有一个服务实例。
-- 设置页可改二进制目录、数据目录、监听地址、Public URL 和 API 地址；这些值用于本窗口后续命令，不写 `config.json`，重启后按二进制默认值和 `config.json` 重新预填。
+- 设置页可改二进制目录、数据目录、备份地址、监听地址、Public URL 和 API 地址；这些值用于本窗口后续命令，不写 `config.json`，重启后按二进制默认值和 `config.json` 重新预填。
 - 字体优先使用 Microsoft YaHei UI / PingFang SC / Noto Sans CJK SC，关闭子像素抗锯齿并使用灰度抗锯齿，字号比常规桌面控件大一档。
 - 窗口标题栏、边框和圆角全部使用系统原生：Windows 是 x/□/-，GNOME 只有关闭按钮，macOS 是交通灯。不再自绘标题栏、不设置 frameless 或透明窗口。对话框也使用原生标题栏，内容高度已预留标题栏。设置和命令行提示的标题不带应用名后缀。
 - 账户列表是 60px 两行成员行：头像、用户名、组标签和右侧状态点；悬停/选中为长胶囊，选中头像变实心蓝，底部信息栏显示“已选择 / 取消选择”和操作。
