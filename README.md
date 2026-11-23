@@ -57,13 +57,24 @@ Windows 用 `gui\.venv\Scripts\python gui\app.py`；更完整的命令见 [gui/R
 
 关闭窗口会停止由它启动的服务；外部启动的 `chat-deepseek serve` 不会被它接管。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止服务是强制结束进程；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
 
-## 发布包
+## 发布流水线
 
-仓库暂时没有自动发布流水线。发布包需要按上面的构建步骤手动生成：Web 静态资源、三个平台的 Go 二进制，以及在对应平台用 PyInstaller 打包的 GUI。
+`.github/workflows/release-{linux,windows,macos}.yml` 是三个手动触发的 GitHub Actions 工作流：在 Actions 里选择 Release Linux、Release Windows 或 Release macOS，点击 Run workflow；push、标签、Pull Request 和定时任务都不会自动触发。
 
-每个 ZIP 根目录都包含 `chat-deepseek`（Windows 为 `.exe`）、`chat-deepseek-gui`（Windows 为 `.exe`）、`src/`，以及 `README.md`、`LICENSE`、`THIRD_PARTY_NOTICES.md`。`chat-deepseek-gui` 需要和同目录的 `chat-deepseek` 一起使用。
+每个工作流都在自己的 runner 上完整执行 Web 构建、Go CLI 编译、PyInstaller GUI 打包和 ZIP 生成，最后得到：
 
-macOS 包没有签名/公证，首次打开可能需要在 Finder 右键“打开”，或执行 `xattr -cr`。Windows 包也未签名，可能出现 SmartScreen 提示。
+```text
+chat-deepseek-<版本>-linux-amd64.zip
+chat-deepseek-<版本>-windows-amd64.zip
+chat-deepseek-<版本>-macos-arm64.zip
+```
+
+版本取自 tag 名；在分支上手动运行时使用提交的 SHA。每个 ZIP 根目录都包含 `chat-deepseek`（Windows 为 `.exe`）、`chat-deepseek-gui`（Windows 为 `.exe`）、`src/`，以及 `README.md`、`LICENSE`、`THIRD_PARTY_NOTICES.md`。`chat-deepseek-gui` 需要和同目录的 `chat-deepseek` 一起使用。
+
+- Linux 使用 `ubuntu-latest`，Windows 使用 `windows-latest`，macOS 使用 `macos-latest`（arm64）。
+- 在 tag 上运行会把 ZIP 和 SHA256 上传到对应的 GitHub Release；在分支上运行只保留 Actions artifacts。
+- 三个工作流共用并发组，同一 tag 的发布串行执行，避免同时创建 Release。
+- macOS 包没有签名/公证，首次打开可能需要在 Finder 右键“打开”，或执行 `xattr -cr`。Windows 包也未签名，可能出现 SmartScreen 提示。
 
 ## 账户
 
