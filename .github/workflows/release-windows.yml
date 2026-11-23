@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref_type == 'tag' && github.ref_name || github.run_id }}
+  group: release-${{ github.ref }}-${{ github.workflow }}
   cancel-in-progress: false
 
 env:
@@ -116,12 +116,24 @@ jobs:
           }
           # gh 把资产参数当作 glob；Windows 反斜杠会被当成转义符。
           $archivePath = $archive.FullName -replace '\\', '/'
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $archivePath --clobber
-          } else {
-            gh release create $tag $archivePath --title $tag --generate-notes
-            if ($LASTEXITCODE -ne 0) {
+          $published = $false
+          for ($attempt = 0; $attempt -lt 6 -and -not $published; $attempt++) {
+            gh release view $tag *> $null
+            if ($LASTEXITCODE -eq 0) {
               gh release upload $tag $archivePath --clobber
+              if ($LASTEXITCODE -eq 0) {
+                $published = $true
+              }
+            } else {
+              gh release create $tag $archivePath --title $tag --generate-notes
+              if ($LASTEXITCODE -eq 0) {
+                $published = $true
+              }
             }
+            if (-not $published) {
+              Start-Sleep -Seconds 5
+            }
+          }
+          if (-not $published) {
+            throw "Failed to publish release"
           }

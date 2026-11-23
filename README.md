@@ -71,9 +71,9 @@ chat-deepseek-<版本>-macos-arm64.zip
 
 版本取自 tag 名；在分支上手动运行时使用提交的 SHA。每个 ZIP 根目录都包含 `chat-deepseek`（Windows 为 `.exe`）、GUI、`src/`，以及 `README.md`、`LICENSE`、`THIRD_PARTY_NOTICES.md`。Windows 的 GUI 是可执行文件 `.exe`；macOS 的 GUI 是 `chat-deepseek-gui.app`，并附带同名启动器，`.app` 内自带一份 CLI，根目录的 `chat-deepseek` 仍用于服务端。
 
-- Linux 使用 `ubuntu-latest`，Windows 使用 `windows-latest`，macOS 使用 `macos-latest`（arm64）。
+- Linux 使用 `ubuntu-latest`；GUI 在 `python:3.13-bookworm` 容器里构建，以 Debian bookworm 的 glibc 作为兼容基线，避免把 runner 的新 glibc 打进 onefile。Windows 使用 `windows-latest`，macOS 使用 `macos-latest`（arm64）。
 - 在 tag 上运行会把 ZIP 上传到对应的 GitHub Release；在分支上运行只保留 Actions artifacts。
-- 三个工作流共用并发组，同一 tag 的发布串行执行，避免同时创建 Release。
+- 三个 workflow 可以并行；发布步骤会对同一 tag 的 Release 创建和上传做重试，避免同时创建时的竞态。
 - Windows EXE 和 macOS `.app` 使用鲸鱼应用图标；Linux 可执行文件没有文件图标，窗口/任务栏图标由程序运行时设置。
 - macOS 包只做 ad-hoc 签名，没有开发者签名/公证，首次打开可能需要在 Finder 右键“打开”，或执行 `xattr -cr`。Windows 包也未签名，可能出现 SmartScreen 提示。
 

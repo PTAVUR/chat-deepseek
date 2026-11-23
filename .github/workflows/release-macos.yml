@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref_type == 'tag' && github.ref_name || github.run_id }}
+  group: release-${{ github.ref }}-${{ github.workflow }}
   cancel-in-progress: false
 
 env:
@@ -151,10 +151,16 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" chat-deepseek-*.zip --clobber
-          else
-            gh release create "$tag" chat-deepseek-*.zip \
-              --title "$tag" --generate-notes ||
-              gh release upload "$tag" chat-deepseek-*.zip --clobber
-          fi
+          archive="$PWD/chat-deepseek-${VERSION}-macos-arm64.zip"
+          for attempt in 1 2 3 4 5 6; do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              if gh release upload "$tag" "$archive" --clobber; then
+                exit 0
+              fi
+            elif gh release create "$tag" "$archive" --title "$tag" --generate-notes; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "failed to publish $tag" >&2
+          exit 1

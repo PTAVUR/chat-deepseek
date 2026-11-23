@@ -28,6 +28,7 @@
 ### 发布
 
 - 提供 Linux amd64、Windows amd64、macOS arm64 发布 ZIP，根目录包含 CLI、GUI、`src/` 和文档。
+- Linux GUI 在 Debian bookworm 容器内打包，使用较旧的 glibc 作为兼容基线，避免在较旧发行版上无法启动。
 - 三个平台各自通过 GitHub Actions 手动构建；在 tag 上运行会创建或更新 GitHub Release。
 
 ### 注意
