@@ -22,8 +22,9 @@
 - `pnpm lint`：通过，`0 warnings and 0 errors`（约 131 个文件）。
 - `pnpm build`：通过，生成 `dist/` 并复制到 `internal/webui/dist/` 供 `go:embed`。
 - 测试：Go 单元/接口测试覆盖 auth、account、database、config、secret、settings、chat、filestore、backup、deepseek、server；`go test ./...` 通过。前端没有自动化测试。
-- 手动端到端：已用临时数据目录 + dev 代理走通登录、退出、设置/API Key、会话创建/加载/刷新持久化、附件上传和 SSE mock 回复；侧边栏 Logo、头像菜单、Deepseek 标题与 favicon 已在无头 Chrome 验证（桌面与移动端），登录页深色样式、DM Sans 字标和首页鲸鱼也已核对；系统设置已按官方左右分栏与行式列表重做，账户资料保存后就地更新且不关闭弹窗；桌面与移动端均已在无头 Chrome 核对；删除会话、清空全部会话和移除草稿附件后，`files` 表、磁盘原件和空用户目录均已核对清理；历史导出后重新导入会重映射附件 ID 并原子替换会话；`backup` 在服务运行时拒绝、停止后生成 ZIP。
+- 手动端到端：已用临时数据目录 + dev 代理走通登录、退出、设置/API Key、会话创建/加载/刷新持久化、附件上传和 SSE mock 回复；侧边栏 Logo、头像菜单、Deepseek 标题与 favicon 已在无头 Chrome 验证（桌面与移动端），登录页明暗两套样式、DM Sans 字标和首页鲸鱼也已核对；系统设置已按官方左右分栏与行式列表重做，账户资料保存后就地更新且不关闭弹窗；桌面与移动端均已在无头 Chrome 核对；删除会话、清空全部会话和移除草稿附件后，`files` 表、磁盘原件和空用户目录均已核对清理；历史导出后重新导入会重映射附件 ID 并原子替换会话；`backup` 在服务运行时拒绝、停止后生成 ZIP。
 - 代码规模：`src` 约 21k 行（含 CSS Modules）；最大文件是 `src/services/chat/store.ts`（约 1.1k 行）。
+- GUI：`gui/app.py` 是 PySide6（Qt 6）管理界面，`parsing.py` 解析 `user list` / `backup` / `serve` / `version` 输出，`dialogs.py` 提供 Qt 输入、确认和路径选择，`widgets.py` 自绘卡片、按钮、输入框、状态点、组标签与成员行；`fonts.py` 优先系统 UI 字体，`assets/whale.svg` 是 CC0 的鲸鱼标志。窗口标题栏、边框和圆角全部交给系统（Windows x/□/-，GNOME 关闭按钮，macOS 交通灯），不再自绘窗口外壳。账户列表是两行成员行（头像、用户名、组标签、状态点），悬停/选中为长胶囊，选中头像变实心蓝，底部信息栏显示“已选择 / 取消选择”和操作。解析器把服务运行中、端口占用、最后一个 Owner、账户不存在、密码不合规等已知失败翻译成可操作提示，只有无法识别时才显示“未知错误”和原始输出；解析器与配置读取共 31 个单元测试通过，成员列表、服务启停、备份和账户增删改已在临时数据目录核对。
 - 源码中没有 `TODO` / `FIXME` 标记。
 
 ## 3. 目录与关键文件
@@ -62,6 +63,21 @@ src/
   assets/                     favicon.svg、DM Sans 字体与 OFL 许可证
   env.d.ts                    CSS Modules / prismjs / katex 的模块声明
 
+gui/                         Python/PySide6 管理界面（.venv 不提交）
+  app.py                     主窗口、状态与操作流程
+  cli.py                     子进程执行与 serve 进程管理
+  parsing.py                 CLI 中文输出解析
+  server_config.py           读取 config.json 与默认参数
+  dialogs.py                 Qt 对话框、路径选择与设置
+  widgets.py                 自绘卡片、按钮、输入框、胶囊、开关与成员行
+  fonts.py                   系统 UI 字体选择
+  assets/whale.svg           DeepSeek 鲸鱼标志（Simple Icons，CC0-1.0）
+  theme.py                   明暗配色、字号与全局样式表
+  tests/test_parsing.py      解析器单元测试
+  tests/test_server_config.py 配置读取测试
+  requirements.txt
+  README.md
+  .gitignore                 忽略 .venv / __pycache__
 cmd/chat-deepseek/            Go CLI 入口（v1 服务端，见 §13）
 internal/
   config/                     数据目录、config.json 与 DeepSeek API 地址
@@ -242,8 +258,10 @@ pnpm dev
 4. 上传图片 / 文档、拖放 / 粘贴、发送、刷新后仍能显示和下载。
 5. 思考 / 搜索开关、来源面板、链接阅读、引用角标。
 6. 移动端布局（<768px）、键盘弹出；历史导入导出、删除全部会话。
-7. 生产二进制：`pnpm build` 后 `go build`，访问 `/` 能看到 UI 和静态资源。
+7. 生产二进制：`pnpm build` 后 `go build -o chat-deepseek ./cmd/chat-deepseek`，访问 `/` 能看到 UI 和静态资源。
 8. 停止服务后 `chat-deepseek backup` 生成 ZIP；服务运行、存在 `chat.db-wal` 或 `chat.db-shm` 时拒绝备份。
+9. `gui/.venv/bin/python gui/app.py` 用临时数据目录点击初始化、启动/停止、成员列表、账户操作和备份；确认密码不出现在命令行与输出。
+10. `gui/.venv/bin/python -m unittest discover -s gui/tests` 通过。
 
 当前不配置 GitLab CI；上游遗留的 GitHub Pages workflow 只跑前端门禁，Go 测试/`go vet` 在本地执行。前端新增测试框架前先与用户确认。
 
@@ -310,7 +328,9 @@ pnpm dev
 - **package version**：`0.1.0-official0.1.3` 是合法的 semver 预发布版本（prerelease），npm 已验证可解析，pnpm 构建也能读取；私有项目不发布 npm，所以可以采用。注意它排序在 `0.1.0` 之前，不要把它当作正式版 `0.1.0` 的替代。
 - **浏览器存储**：v1 已移除 localStorage/IndexedDB，旧浏览器数据不会自动迁移到服务端；需要保留历史时先在旧版本导出 ZIP，再在新版导入。
 - **README 语言**：只保留中文 `README.md`，英文版已删除；README 保持用户文档定位，试错与决策记录放这里。
-- **UI 文案与视觉**：标题、`appName` 为 `Deepseek`；字标使用 DM Sans 700（OFL，官方界面字体；官方字标本身是定制字形，不能公开使用）。侧边栏和登录页使用 Simple Icons 的 DeepSeek 鲸鱼标志（CC0-1.0）；设置入口是头像 + 用户名菜单，右侧是 `...`；登录页是深色官方风格，首页问候语左侧有鲸鱼；系统设置采用官方左右分栏与行式列表，账户资料保存后就地更新，弹窗不关闭、不整页刷新。第三方来源与商标说明见 `THIRD_PARTY_NOTICES.md`。
+- **UI 文案与视觉**：标题、`appName` 为 `Deepseek`；字标使用 DM Sans 700（OFL，官方界面字体；官方字标本身是定制字形，不能公开使用）。侧边栏和登录页使用 Simple Icons 的 DeepSeek 鲸鱼标志（CC0-1.0）；设置入口是头像 + 用户名菜单，右侧是 `...`；登录页跟随明暗主题（亮色白底 / 暗色官方风格），首页问候语左侧有鲸鱼；系统设置采用官方左右分栏与行式列表，账户资料保存后就地更新，弹窗不关闭、不整页刷新。第三方来源与商标说明见 `THIRD_PARTY_NOTICES.md`。
+- **GUI 管理界面**：`gui/app.py` 是 Python 3.10+/PySide6 界面，所有操作都拼成 `chat-deepseek` 子命令，不写 `data/`；默认参数从 `data/config.json` 读取，密码通过 `--password-stdin` 走 stdin。`gui/.venv` 由 `python3 -m venv` 创建、已由 `gui/.gitignore` 忽略，依赖从清华源安装。界面把 `user list` 解析成成员列表，把 `backup` 解析成路径/大小，把 `serve` 日志解析成状态；失败时把“服务运行中”“端口占用”“最后一个 Owner”“账户不存在”“密码不合规”等已知条件翻译成可操作提示，解析不了才显示“未知错误”和原始输出。CLI 参数、退出码或中文输出变化时要同步改 `parsing.py` 和测试。设置页是二进制目录、数据目录、监听地址、Public URL、API 地址，默认值按二进制目录和 `config.json` 预填，左下角“恢复默认”回到内置默认；保存只作用于本窗口后续命令，不写 `config.json`。
+- **GUI 视觉**：窗口标题栏、边框和圆角全部使用系统原生（Windows x/□/-，GNOME 关闭按钮，macOS 交通灯），不再自绘、不再 frameless、不再设置透明窗口或自定义圆角；对话框也用原生标题栏，内容高度预留标题栏。不设置 `applicationDisplayName`，标题只有“设置”“命令行提示”等。账户列表是 60px 两行成员行：36px 头像、用户名、Owner/Admin/User 组标签、右侧状态点；悬停/选中为长胶囊（高度贴满行，不再和上一条分隔线留缝），选中头像变实心蓝；底部信息栏显示“已选择 / 取消选择”和操作。卡片 32px，按钮/输入框/开关用胶囊端（20px），阴影自绘并关闭子像素抗锯齿。界面优先使用 Microsoft YaHei UI / PingFang SC / Noto Sans CJK SC，字号整体大一档。启动时用户列表与版本并行加载；Windows 子进程用 `CREATE_NO_WINDOW` 避免控制台闪窗。Windows 上停止服务是强制结束；关闭 GUI 只停止由它启动的服务，不接管外部进程。
 - **嵌入 UI**：Go 二进制只包含编译时 `internal/webui/dist/` 里的内容；仓库只提交 `.gitkeep`。忘记 `pnpm build` 会得到占位页，不是运行时找不到文件。
 - **GitLab 保护分支**：`feature/dev` 在 GitLab 上被保护，`git push --force-with-lease` 会被拒绝（protected branch）。不要重写已推送的提交；需要修历史时先在 GitLab 取消保护，或换新分支。
 - **Go 缓存**：本机默认 `GOPATH`/模块缓存位于 workspace 外，DSH 沙箱下只读。构建/测试需把 `GOPATH`、`GOMODCACHE`、`GOCACHE` 指到 workspace 的 `tmp/`（已 gitignore）；例如 `export GOPATH=$PWD/tmp/gopath GOMODCACHE=$PWD/tmp/gopath/pkg/mod GOCACHE=$PWD/tmp/go-build`。`/tmp` 在部分工具调用间不保留，不要依赖它。

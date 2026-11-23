@@ -37,6 +37,24 @@ CGO_ENABLED=0 go build -o chat-deepseek ./cmd/chat-deepseek
 
 服务面向自托管使用，默认只监听本机。需要局域网或公网访问时，改成 `--listen 0.0.0.0:8090`，并建议放在 HTTPS 反向代理后面。v1 不提供 Docker 镜像、systemd 单元或 Web 管理页；进程由用户自己的 supervisor、tmux 或 nohup 托管。
 
+## 图形界面（可选）
+
+`gui/app.py` 是 Python + PySide6（Qt 6）管理界面：按钮只负责拼出 `chat-deepseek` 子命令，输出由 `gui/parsing.py` 解析成账户列表、服务状态和提示；已知失败会翻译成可操作说明，识别不了才显示原始输出。账户、会话、备份逻辑仍全部在 `chat-deepseek` 里，不另写一套。它覆盖 `setup`、`serve`、`backup`、`user ...`、`version` 和 `help`；聊天仍由 `serve` 提供的现有 Web UI 完成。
+
+依赖装在 `gui/.venv`（已 gitignore）。在仓库根目录：
+
+```sh
+python3 -m venv gui/.venv
+gui/.venv/bin/pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r gui/requirements.txt
+gui/.venv/bin/python gui/app.py
+```
+
+Windows 用 `gui\.venv\Scripts\python gui\app.py`；更完整的命令见 [gui/README.md](gui/README.md)。需要 Python 3.10+ 和 `requirements.txt` 里的 PySide6。Linux 还缺 Qt 的 xcb 运行库时，按 `gui/README.md` 安装系统包。
+
+`gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。设置页的二进制目录、数据目录和监听地址会按当前二进制目录与 `data/config.json` 预填，Public URL 对应 `--public-url`，API 地址对应 `--api-origin`；左下角的“恢复默认”回到二进制同级 `data/`、`127.0.0.1:8090` 和官方 API 地址。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里。
+
+关闭窗口会停止由它启动的服务；外部启动的 `chat-deepseek serve` 不会被它接管。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止服务是强制结束进程；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
+
 ## 账户
 
 账户和组管理只通过服务端 CLI 完成，没有公开注册。
@@ -142,7 +160,7 @@ src/                  React 客户端
 - 从静态前端改为 Go 服务端 + Web 客户端；`file://` 直接打开不再受支持，必须通过服务端访问。
 - 账户、会话、附件、设置和 API Key 移到服务端；不再使用浏览器本地存储。
 - 增加 CLI 账户管理、登录/CSRF、服务端文件代理和 SSE 代理。
-- 界面品牌改为 `Deepseek`，字标使用 DM Sans；侧边栏与登录页使用 DeepSeek 鲸鱼标志，登录页采用深色官方风格。来源与商标说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- 界面品牌改为 `Deepseek`，字标使用 DM Sans；侧边栏与登录页使用 DeepSeek 鲸鱼标志，登录页跟随明暗主题（亮色白底 / 暗色官方风格）。来源与商标说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - `main` 只镜像上游，日常改造在 `feature/*` 分支进行；分支、版本与协作约定见 [AGENTS.md](AGENTS.md)。
 
 ## 许可证
