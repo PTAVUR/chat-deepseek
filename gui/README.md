@@ -37,6 +37,9 @@ widgets.py      自绘卡片、按钮、输入框、状态点、组标签与成�
 fonts.py        选择 Windows/macOS/Linux 的系统 UI 字体
 theme.py        明暗配色、字号与全局样式表
 assets/whale.svg DeepSeek 鲸鱼标志（Simple Icons，CC0-1.0）
+assets/whale.ico Windows 可执行文件图标
+assets/whale.icns macOS .app 图标
+assets/whale.png 512px 图标（备用）
 tests/          解析器与配置读取测试
 ```
 
@@ -61,5 +64,6 @@ gui/.venv/bin/python -m unittest discover -s gui/tests -v
 - 卡片使用五次贝塞尔连续曲率（32px），按钮、输入框、开关用胶囊端（20px），账户悬停/选中为长胶囊。
 - 界面跟随系统深浅色，并在系统主题变化时重刷配色、QSS 与原生控件调色板。
 - 依赖不随仓库提交；PySide6 / Qt 的许可证见各自发布包。
+- 发布包中 Windows 用 `.ico` 设置 EXE 图标；macOS 用 `.app` 承载 `.icns` 图标，并附带同名启动器。Linux 的 ELF 可执行文件不携带文件图标，窗口/任务栏图标由 Qt 在运行时设置。
 - Linux 需要 Qt 的 xcb 运行库；Debian/Ubuntu 若提示缺少 `xcb-cursor`，安装 `libxcb-cursor0`。
 - Linux 没有图形桌面时继续用 CLI，不需要安装 PySide6。

@@ -2,7 +2,7 @@
 
 ## DeepSeek 鲸鱼标志
 
-`src/components/base/WhaleLogo.tsx`、`src/assets/favicon.svg` 和 `gui/assets/whale.svg` 中的鲸鱼 SVG 路径来自
+`src/components/base/WhaleLogo.tsx`、`src/assets/favicon.svg`、`gui/assets/whale.svg` 以及由它渲染的 `gui/assets/whale.png`、`gui/assets/whale.ico`、`gui/assets/whale.icns` 中的鲸鱼路径来自
 [Simple Icons 的 deepseek 图标](https://github.com/simple-icons/simple-icons/blob/develop/icons/deepseek.svg)。
 
 - Simple Icons 以 [CC0-1.0](https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md) 发布。

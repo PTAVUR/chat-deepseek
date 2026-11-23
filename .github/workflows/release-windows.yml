@@ -74,6 +74,7 @@ jobs:
           python -m PyInstaller --noconfirm --clean --onefile --windowed `
             --name chat-deepseek-gui `
             --paths gui `
+            --icon "$env:GITHUB_WORKSPACE\gui\assets\whale.ico" `
             --add-data "$env:GITHUB_WORKSPACE\gui\assets;assets" `
             --distpath dist-gui `
             --workpath build-gui `
@@ -85,7 +86,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $archive = "chat-deepseek-$env:VERSION-windows-amd64.zip"
           Remove-Item -Recurse -Force release -ErrorAction SilentlyContinue
-          Remove-Item -Force $archive, "$archive.sha256" -ErrorAction SilentlyContinue
+          Remove-Item -Force $archive -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force release | Out-Null
           Copy-Item dist/windows-amd64/chat-deepseek.exe release/chat-deepseek.exe
           Copy-Item dist-gui/chat-deepseek-gui.exe release/chat-deepseek-gui.exe
@@ -94,16 +95,12 @@ jobs:
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md release/
           & .\release\chat-deepseek.exe version
           Compress-Archive -Path release\* -DestinationPath $archive -Force
-          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
-          "$hash  $archive" | Out-File -Encoding ascii "$archive.sha256"
-          Get-Item $archive, "$archive.sha256" | Format-List Length,FullName
+          Get-Item $archive | Format-List Length,FullName
       - name: Upload archive
         uses: actions/upload-artifact@v7
         with:
           name: release-windows-amd64
-          path: |
-            chat-deepseek-*-windows-amd64.zip
-            chat-deepseek-*-windows-amd64.zip.sha256
+          path: chat-deepseek-*-windows-amd64.zip
           retention-days: 30
       - name: Publish GitHub Release
         if: github.ref_type == 'tag'
@@ -114,7 +111,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $false
           $tag = $env:GITHUB_REF_NAME
           $assets = Get-ChildItem -Path . -File |
-            Where-Object { $_.Name -like "chat-deepseek-*.zip" -or $_.Name -like "chat-deepseek-*.sha256" } |
+            Where-Object { $_.Name -like "chat-deepseek-*.zip" } |
             ForEach-Object { $_.FullName }
           if ($assets.Count -eq 0) {
             throw "No release assets found"

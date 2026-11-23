@@ -2,7 +2,7 @@
 
 基于 DeepSeek API 的自托管聊天应用：Go 服务端 + React Web 客户端。账户、会话、附件、设置和 API Key 都保存在服务器上，浏览器只保留登录 Cookie 和内存中的 CSRF token。
 
-本项目是 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) 的 fork，当前版本 `0.1.0-official0.1.3`，代码基线为上游 `v0.1.3`。仓库位于 [GitHub](https://github.com/elegantgx/chat-deepseek)。
+本项目是 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) 的 fork，当前版本 `0.1.0-official0.1.3`，代码基线为上游 `v0.1.3`。仓库位于 [GitHub](https://github.com/elegantgx/chat-deepseek)，变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 运行
 
@@ -69,12 +69,13 @@ chat-deepseek-<版本>-windows-amd64.zip
 chat-deepseek-<版本>-macos-arm64.zip
 ```
 
-版本取自 tag 名；在分支上手动运行时使用提交的 SHA。每个 ZIP 根目录都包含 `chat-deepseek`（Windows 为 `.exe`）、`chat-deepseek-gui`（Windows 为 `.exe`）、`src/`，以及 `README.md`、`LICENSE`、`THIRD_PARTY_NOTICES.md`。`chat-deepseek-gui` 需要和同目录的 `chat-deepseek` 一起使用。
+版本取自 tag 名；在分支上手动运行时使用提交的 SHA。每个 ZIP 根目录都包含 `chat-deepseek`（Windows 为 `.exe`）、GUI、`src/`，以及 `README.md`、`LICENSE`、`THIRD_PARTY_NOTICES.md`。Windows 的 GUI 是可执行文件 `.exe`；macOS 的 GUI 是 `chat-deepseek-gui.app`，并附带同名启动器，`.app` 内自带一份 CLI，根目录的 `chat-deepseek` 仍用于服务端。
 
 - Linux 使用 `ubuntu-latest`，Windows 使用 `windows-latest`，macOS 使用 `macos-latest`（arm64）。
-- 在 tag 上运行会把 ZIP 和 SHA256 上传到对应的 GitHub Release；在分支上运行只保留 Actions artifacts。
+- 在 tag 上运行会把 ZIP 上传到对应的 GitHub Release；在分支上运行只保留 Actions artifacts。
 - 三个工作流共用并发组，同一 tag 的发布串行执行，避免同时创建 Release。
-- macOS 包没有签名/公证，首次打开可能需要在 Finder 右键“打开”，或执行 `xattr -cr`。Windows 包也未签名，可能出现 SmartScreen 提示。
+- Windows EXE 和 macOS `.app` 使用鲸鱼应用图标；Linux 可执行文件没有文件图标，窗口/任务栏图标由程序运行时设置。
+- macOS 包只做 ad-hoc 签名，没有开发者签名/公证，首次打开可能需要在 Finder 右键“打开”，或执行 `xattr -cr`。Windows 包也未签名，可能出现 SmartScreen 提示。
 
 ## 账户
 

@@ -81,28 +81,68 @@ jobs:
             --specpath build-gui \
             gui/app.py
           ls -lh dist-gui/chat-deepseek-gui
+      - name: Assemble macOS app
+        run: |
+          set -euo pipefail
+          bundle_version=$(python -c "import json; print(json.load(open('package.json'))['version'].split('-', 1)[0])")
+          app="$PWD/dist-gui/chat-deepseek-gui.app"
+          rm -rf "$app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          install -m 0755 dist-gui/chat-deepseek-gui "$app/Contents/MacOS/chat-deepseek-gui"
+          install -m 0755 dist/darwin-arm64/chat-deepseek "$app/Contents/MacOS/chat-deepseek"
+          install -m 0644 gui/assets/whale.icns "$app/Contents/Resources/chat-deepseek-gui.icns"
+          printf 'APPL????' > "$app/Contents/PkgInfo"
+          python - "$bundle_version" "$app" <<'PY'
+          import plistlib
+          import pathlib
+          import sys
+
+          version, bundle = sys.argv[1], pathlib.Path(sys.argv[2])
+          info = {
+              "CFBundleDevelopmentRegion": "zh_CN",
+              "CFBundleDisplayName": "chat-deepseek",
+              "CFBundleExecutable": "chat-deepseek-gui",
+              "CFBundleIconFile": "chat-deepseek-gui.icns",
+              "CFBundleIdentifier": "com.elegantgx.chat-deepseek",
+              "CFBundleInfoDictionaryVersion": "6.0",
+              "CFBundleName": "chat-deepseek-gui",
+              "CFBundlePackageType": "APPL",
+              "CFBundleShortVersionString": version,
+              "CFBundleVersion": version,
+              "LSApplicationCategoryType": "public.app-category.utilities",
+              "LSMinimumSystemVersion": "12.0",
+              "NSHighResolutionCapable": True,
+          }
+          (bundle / "Contents" / "Info.plist").write_bytes(
+              plistlib.dumps(info, fmt=plistlib.FMT_XML)
+          )
+          PY
+          codesign --force --deep --sign - "$app"
+          ls -lh "$app/Contents/MacOS/chat-deepseek-gui"
       - name: Package
         run: |
           set -euo pipefail
           archive="chat-deepseek-${VERSION}-macos-arm64.zip"
-          rm -rf release "${archive}" "${archive}.sha256"
+          rm -rf release "${archive}"
           mkdir -p release
           install -m 0755 dist/darwin-arm64/chat-deepseek release/chat-deepseek
-          install -m 0755 dist-gui/chat-deepseek-gui release/chat-deepseek-gui
+          ditto "$PWD/dist-gui/chat-deepseek-gui.app" release/chat-deepseek-gui.app
+          cat > release/chat-deepseek-gui <<'SH'
+#!/bin/sh
+exec "$(dirname "$0")/chat-deepseek-gui.app/Contents/MacOS/chat-deepseek-gui" "$@"
+SH
+          chmod 0755 release/chat-deepseek-gui
           cp -R src release/src
           cp README.md LICENSE THIRD_PARTY_NOTICES.md release/
           chmod 0644 release/README.md release/LICENSE release/THIRD_PARTY_NOTICES.md
           ./release/chat-deepseek version
           (cd release && zip -9 -r "../${archive}" .)
-          shasum -a 256 "${archive}" > "${archive}.sha256"
-          ls -lh "${archive}" "${archive}.sha256"
+          ls -lh "${archive}"
       - name: Upload archive
         uses: actions/upload-artifact@v7
         with:
           name: release-macos-arm64
-          path: |
-            chat-deepseek-*-macos-arm64.zip
-            chat-deepseek-*-macos-arm64.zip.sha256
+          path: chat-deepseek-*-macos-arm64.zip
           retention-days: 30
       - name: Publish GitHub Release
         if: github.ref_type == 'tag'
@@ -112,9 +152,9 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" chat-deepseek-*.zip chat-deepseek-*.sha256 --clobber
+            gh release upload "$tag" chat-deepseek-*.zip --clobber
           else
-            gh release create "$tag" chat-deepseek-*.zip chat-deepseek-*.sha256 \
+            gh release create "$tag" chat-deepseek-*.zip \
               --title "$tag" --generate-notes ||
-              gh release upload "$tag" chat-deepseek-*.zip chat-deepseek-*.sha256 --clobber
+              gh release upload "$tag" chat-deepseek-*.zip --clobber
           fi

@@ -37,9 +37,15 @@ def find_binary() -> str:
     name = binary_name()
     if getattr(sys, "frozen", False):
         # PyInstaller 包内 __file__ 在临时解压目录；发布包里的 CLI 与 GUI 同级。
-        candidate = Path(sys.executable).parent / name
-        if candidate.is_file():
-            return str(candidate)
+        # macOS 的 GUI 在 .app 内，CLI 仍在 .app 的上一层目录。
+        executable = Path(sys.executable)
+        directories = [executable.parent]
+        if sys.platform == "darwin" and len(executable.parents) > 3:
+            directories.append(executable.parents[3])
+        for directory in directories:
+            candidate = directory / name
+            if candidate.is_file():
+                return str(candidate)
     here = Path(__file__).resolve().parent
     for candidate in (here.parent / name, here.parent / "chat-deepseek"):
         if candidate.is_file():

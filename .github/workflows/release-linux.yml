@@ -90,7 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           archive="chat-deepseek-${VERSION}-linux-amd64.zip"
-          rm -rf release "${archive}" "${archive}.sha256"
+          rm -rf release "${archive}"
           mkdir -p release
           install -m 0755 dist/linux-amd64/chat-deepseek release/chat-deepseek
           install -m 0755 dist-gui/chat-deepseek-gui release/chat-deepseek-gui
@@ -99,15 +99,12 @@ jobs:
           chmod 0644 release/README.md release/LICENSE release/THIRD_PARTY_NOTICES.md
           ./release/chat-deepseek version
           (cd release && zip -9 -r "../${archive}" .)
-          sha256sum "${archive}" > "${archive}.sha256"
-          ls -lh "${archive}" "${archive}.sha256"
+          ls -lh "${archive}"
       - name: Upload archive
         uses: actions/upload-artifact@v7
         with:
           name: release-linux-amd64
-          path: |
-            chat-deepseek-*-linux-amd64.zip
-            chat-deepseek-*-linux-amd64.zip.sha256
+          path: chat-deepseek-*-linux-amd64.zip
           retention-days: 30
       - name: Publish GitHub Release
         if: github.ref_type == 'tag'
@@ -117,9 +114,9 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" chat-deepseek-*.zip chat-deepseek-*.sha256 --clobber
+            gh release upload "$tag" chat-deepseek-*.zip --clobber
           else
-            gh release create "$tag" chat-deepseek-*.zip chat-deepseek-*.sha256 \
+            gh release create "$tag" chat-deepseek-*.zip \
               --title "$tag" --generate-notes ||
-              gh release upload "$tag" chat-deepseek-*.zip chat-deepseek-*.sha256 --clobber
+              gh release upload "$tag" chat-deepseek-*.zip --clobber
           fi
