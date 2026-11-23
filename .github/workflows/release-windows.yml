@@ -90,8 +90,9 @@ jobs:
           New-Item -ItemType Directory -Force release | Out-Null
           Copy-Item dist/windows-amd64/chat-deepseek.exe release/chat-deepseek.exe
           Copy-Item dist-gui/chat-deepseek-gui.exe release/chat-deepseek-gui.exe
-          New-Item -ItemType Directory -Force release/src | Out-Null
-          Copy-Item -Path src\* -Destination release/src -Recurse
+          git archive --format=zip --output=source.zip HEAD
+          Expand-Archive -Path source.zip -DestinationPath release/src -Force
+          Remove-Item source.zip
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md release/
           & .\release\chat-deepseek.exe version
           Compress-Archive -Path release\* -DestinationPath $archive -Force

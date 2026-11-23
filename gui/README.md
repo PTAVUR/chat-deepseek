@@ -23,6 +23,7 @@ gui\.venv\Scripts\python gui\app.py
 ```
 
 `app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录；Windows 为 `chat-deepseek.exe`），也可以在“设置”里选择。
+Linux 发布包根目录的 `gui/` 就是本目录，CLI 在上一级；解压后按上面的命令执行即可，发布包不再提供 Linux GUI 二进制。
 没有图形桌面的服务器直接用 CLI，不需要安装这些依赖。
 
 ## 结构
@@ -64,6 +65,6 @@ gui/.venv/bin/python -m unittest discover -s gui/tests -v
 - 卡片使用五次贝塞尔连续曲率（32px），按钮、输入框、开关用胶囊端（20px），账户悬停/选中为长胶囊。
 - 界面跟随系统深浅色，并在系统主题变化时重刷配色、QSS 与原生控件调色板。
 - 依赖不随仓库提交；PySide6 / Qt 的许可证见各自发布包。
-- 发布包中 Windows 用 `.ico` 设置 EXE 图标；macOS 用 `.app` 承载 `.icns` 图标，并附带同名启动器。Linux 的 ELF 可执行文件不携带文件图标，窗口/任务栏图标由 Qt 在运行时设置。
+- 发布包中 Windows 用 `.ico` 设置 EXE 图标；macOS 用 `.app` 承载 `.icns` 图标，并附带同名启动器。Linux 发布包不含 GUI 二进制；从源码运行或自行打包时，ELF 文件不携带文件图标，窗口/任务栏图标由 Qt 在运行时设置。
 - Linux 需要 Qt 的 xcb 运行库；Debian/Ubuntu 若提示缺少 `xcb-cursor`，安装 `libxcb-cursor0`。
 - Linux 没有图形桌面时继续用 CLI，不需要安装 PySide6。

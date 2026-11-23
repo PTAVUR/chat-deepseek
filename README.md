@@ -37,7 +37,7 @@ CGO_ENABLED=0 go build -o chat-deepseek ./cmd/chat-deepseek
 --password-stdin       从标准输入读取密码（setup / user add / user reset-password）
 ```
 
-服务面向自托管使用，默认只监听本机。需要局域网或公网访问时，改成 `--listen 0.0.0.0:8090`，并建议放在 HTTPS 反向代理后面。v1 不提供 Docker 镜像、systemd 单元或 Web 管理页；进程由用户自己的 supervisor、tmux 或 nohup 托管。
+服务面向自托管使用，默认只监听本机。需要局域网或公网访问时，改成 `--listen 0.0.0.0:8090`，并建议放在 HTTPS 反向代理后面。当前发布不提供 Docker 镜像、systemd 单元或 Web 管理页；进程由用户自己的 supervisor、tmux 或 nohup 托管。
 
 ## 图形界面（可选）
 
@@ -61,7 +61,7 @@ Windows 用 `gui\.venv\Scripts\python gui\app.py`；更完整的命令见 [gui/R
 
 `.github/workflows/release-{linux,windows,macos}.yml` 是三个手动触发的 GitHub Actions 工作流：在 Actions 里选择 Release Linux、Release Windows 或 Release macOS，点击 Run workflow；push、标签、Pull Request 和定时任务都不会自动触发。
 
-每个工作流都在自己的 runner 上完整执行 Web 构建、Go CLI 编译、PyInstaller GUI 打包和 ZIP 生成，最后得到：
+每个工作流都在自己的 runner 上完整执行 Web 构建、Go CLI 编译和 ZIP 生成；Windows 和 macOS 还会构建 PyInstaller GUI。最后得到：
 
 ```text
 chat-deepseek-<版本>-linux-amd64.zip
@@ -69,12 +69,25 @@ chat-deepseek-<版本>-windows-amd64.zip
 chat-deepseek-<版本>-macos-arm64.zip
 ```
 
-版本取自 tag 名；在分支上手动运行时使用提交的 SHA。每个 ZIP 根目录都包含 `chat-deepseek`（Windows 为 `.exe`）、GUI、`src/`，以及 `README.md`、`LICENSE`、`THIRD_PARTY_NOTICES.md`。Windows 的 GUI 是可执行文件 `.exe`；macOS 的 GUI 是 `chat-deepseek-gui.app`，并附带同名启动器，`.app` 内自带一份 CLI，根目录的 `chat-deepseek` 仍用于服务端。
+版本取自 tag 名；在分支上手动运行时使用提交的 SHA。Linux ZIP 根目录：
 
-- Linux 使用 `ubuntu-latest`；GUI 在 `python:3.13-bookworm` 容器里构建，以 Debian bookworm 的 glibc 作为兼容基线，避免把 runner 的新 glibc 打进 onefile。Windows 使用 `windows-latest`，macOS 使用 `macos-latest`（arm64）。
+```text
+chat-deepseek
+gui/                 GUI 源码
+src/                 完整项目源码（内部保留前端 src/src/）
+README.md
+LICENSE
+THIRD_PARTY_NOTICES.md
+```
+
+Windows 和 macOS ZIP 根目录还包含预编译 GUI：Windows 是 `chat-deepseek-gui.exe`，macOS 是 `chat-deepseek-gui.app` 和同名启动器；两者的 `src/` 同样是完整项目源码。
+
+Linux 不附带预编译 GUI。PyInstaller onefile 会绑定构建机的 glibc，无法同时覆盖 Ubuntu、Fedora 等不同版本；`gui/` 是可直接构建的 GUI 源码，按 [gui/README.md](gui/README.md) 在解压目录创建 venv、安装 PySide6，再运行 `gui/.venv/bin/python gui/app.py`。CLI 是静态二进制，可以直接使用。`gui/` 是完整源码中 `src/gui/` 的副本，方便解压后直接编辑；不使用符号链接。
+
+- Linux 使用 `ubuntu-latest`，只构建 CLI 并打包源码；Windows 使用 `windows-latest`，macOS 使用 `macos-latest`（arm64），继续构建预编译 GUI。
 - 在 tag 上运行会把 ZIP 上传到对应的 GitHub Release；在分支上运行只保留 Actions artifacts。
 - 三个 workflow 可以并行；发布步骤会对同一 tag 的 Release 创建和上传做重试，避免同时创建时的竞态。
-- Windows EXE 和 macOS `.app` 使用鲸鱼应用图标；Linux 可执行文件没有文件图标，窗口/任务栏图标由程序运行时设置。
+- Windows EXE 和 macOS `.app` 使用鲸鱼应用图标；Linux 从源码构建 GUI 时由程序设置窗口/任务栏图标。
 - macOS 包只做 ad-hoc 签名，没有开发者签名/公证，首次打开可能需要在 Finder 右键“打开”，或执行 `xattr -cr`。Windows 包也未签名，可能出现 SmartScreen 提示。
 
 ## 账户

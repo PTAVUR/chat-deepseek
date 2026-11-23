@@ -12,7 +12,6 @@ concurrency:
 
 env:
   VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
-  PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
   release:
@@ -57,36 +56,6 @@ jobs:
           GOOS=linux GOARCH=amd64 go build -trimpath \
             -ldflags "-s -w -X github.com/elegantgx/chat-deepseek/internal/buildinfo.Version=${VERSION}" \
             -o dist/linux-amd64/chat-deepseek ./cmd/chat-deepseek
-      - name: Build GUI
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          docker run --rm \
-            -v "${GITHUB_WORKSPACE}:/src" \
-            -w /src \
-            -e QT_QPA_PLATFORM=offscreen \
-            python:3.13-bookworm \
-            bash -c '
-              set -euo pipefail
-              apt-get update
-              apt-get install -y --no-install-recommends \
-                libgl1 libegl1 libdbus-1-3 libfontconfig1 libxkbcommon-x11-0 \
-                libglib2.0-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
-                libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
-                libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
-              python -m pip install --upgrade pip
-              python -m pip install -r gui/requirements.txt pyinstaller==6.22.3
-              python -m PyInstaller --noconfirm --clean --onefile --windowed \
-                --name chat-deepseek-gui \
-                --paths gui \
-                --add-data "/src/gui/assets:assets" \
-                --distpath dist-gui \
-                --workpath build-gui \
-                --specpath build-gui \
-                gui/app.py
-              chmod -R a+rwX dist-gui build-gui
-            '
-          ls -lh dist-gui/chat-deepseek-gui
       - name: Package
         run: |
           set -euo pipefail
@@ -94,10 +63,12 @@ jobs:
           rm -rf release "${archive}"
           mkdir -p release
           install -m 0755 dist/linux-amd64/chat-deepseek release/chat-deepseek
-          install -m 0755 dist-gui/chat-deepseek-gui release/chat-deepseek-gui
-          cp -a src release/src
+          mkdir -p release/src
+          git archive HEAD | tar -x -C release/src
+          git archive HEAD gui | tar -x -C release
           cp README.md LICENSE THIRD_PARTY_NOTICES.md release/
           chmod 0644 release/README.md release/LICENSE release/THIRD_PARTY_NOTICES.md
+          test ! -e release/chat-deepseek-gui
           ./release/chat-deepseek version
           (cd release && zip -9 -r "../${archive}" .)
           ls -lh "${archive}"

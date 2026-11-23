@@ -132,7 +132,8 @@ jobs:
           exec "$(dirname "$0")/chat-deepseek-gui.app/Contents/MacOS/chat-deepseek-gui" "$@"
           SH
           chmod 0755 release/chat-deepseek-gui
-          cp -R src release/src
+          mkdir -p release/src
+          git archive HEAD | tar -x -C release/src
           cp README.md LICENSE THIRD_PARTY_NOTICES.md release/
           chmod 0644 release/README.md release/LICENSE release/THIRD_PARTY_NOTICES.md
           ./release/chat-deepseek version
