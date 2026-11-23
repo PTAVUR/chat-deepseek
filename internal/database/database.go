@@ -19,10 +19,16 @@ const schemaVersion = 4
 
 // Open 打开数据目录下的 chat.db，启用 WAL/外键并执行迁移。
 func Open(dataDir string) (*sql.DB, error) {
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+	// 先转成绝对路径：SQLite 的 file URI 无法表达相对路径（会被当成
+	// authority），而且绝对路径在错误信息和日志里更明确。
+	dir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve data directory: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
 	}
-	path := filepath.Join(dataDir, "chat.db")
+	path := filepath.Join(dir, "chat.db")
 	db, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -46,7 +52,7 @@ func Open(dataDir string) (*sql.DB, error) {
 }
 
 func dsn(path string) string {
-	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
+	u := &url.URL{Scheme: "file", Path: uriPath(path)}
 	query := u.Query()
 	query.Add("_pragma", "busy_timeout(5000)")
 	query.Add("_pragma", "journal_mode(WAL)")
@@ -54,6 +60,22 @@ func dsn(path string) string {
 	query.Add("_pragma", "synchronous(NORMAL)")
 	u.RawQuery = query.Encode()
 	return u.String()
+}
+
+// uriPath 把绝对文件路径转换成 file URI 的 path 部分。
+// Windows 盘符路径形如 C:/Users/...，如果直接作为 URL.Path，String()
+// 会生成 file://C:/Users/...，SQLite 因此把 "C:" 当成 URI 的 authority
+// 并报 "invalid uri authority: C:"。URI 的 path 必须以 "/" 开头，
+// 补成 /C:/Users/... 后才是合法的 file:///C:/Users/...。
+// UNC 路径 //server/share/... 本身已带前导斜杠，保持原样交给 SQLite。
+func uriPath(path string) string {
+	slashPath := filepath.ToSlash(path)
+	if len(slashPath) >= 3 &&
+		((slashPath[0] >= 'a' && slashPath[0] <= 'z') || (slashPath[0] >= 'A' && slashPath[0] <= 'Z')) &&
+		slashPath[1] == ':' && slashPath[2] == '/' {
+		return "/" + slashPath
+	}
+	return slashPath
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {

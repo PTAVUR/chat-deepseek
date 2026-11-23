@@ -3,7 +3,10 @@ package database
 import (
 	"context"
 	"database/sql"
+	"net/url"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,6 +57,91 @@ func TestOpenIsIdempotent(t *testing.T) {
 		t.Fatalf("second Open: %v", err)
 	}
 	_ = second.Close()
+}
+
+// TestDSNHasNoURIAuthority 覆盖 Windows 盘符路径：file://C:/... 会让
+// SQLite 报 "invalid uri authority: C:"，必须序列化成 file:///C:/...。
+func TestDSNHasNoURIAuthority(t *testing.T) {
+	wantPragmas := []string{
+		"busy_timeout(5000)",
+		"journal_mode(WAL)",
+		"foreign_keys(1)",
+		"synchronous(NORMAL)",
+	}
+	for _, tc := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{
+			name: "windows drive",
+			path: `C:/Users/Alice/My Data/chat-deepseek/data/chat.db`,
+			want: `file:///C:/Users/Alice/My%20Data/chat-deepseek/data/chat.db`,
+		},
+		{
+			name: "windows UNC",
+			path: `//server/share/chat-deepseek/data/chat.db`,
+			want: `file:////server/share/chat-deepseek/data/chat.db`,
+		},
+		{
+			name: "unix absolute",
+			path: `/home/alice/chat-deepseek/data/chat.db`,
+			want: `file:///home/alice/chat-deepseek/data/chat.db`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := dsn(tc.path)
+			if !strings.HasPrefix(got, tc.want+"?") {
+				t.Fatalf("dsn(%q) = %q, want prefix %q", tc.path, got, tc.want)
+			}
+			parsed, err := url.Parse(got)
+			if err != nil {
+				t.Fatalf("parse dsn %q: %v", got, err)
+			}
+			if parsed.Scheme != "file" {
+				t.Fatalf("scheme = %q, want file", parsed.Scheme)
+			}
+			if parsed.Host != "" {
+				t.Fatalf("authority = %q, want empty", parsed.Host)
+			}
+			pragmas := parsed.Query()["_pragma"]
+			if len(pragmas) != len(wantPragmas) {
+				t.Fatalf("pragmas = %v, want %v", pragmas, wantPragmas)
+			}
+			for i, want := range wantPragmas {
+				if pragmas[i] != want {
+					t.Fatalf("pragma[%d] = %q, want %q", i, pragmas[i], want)
+				}
+			}
+		})
+	}
+}
+
+// TestOpenRelativeDataDir 保证相对数据目录也能打开：补绝对路径前，
+// dsn 会生成 file://data/chat.db，同样被 SQLite 当成非法 authority。
+func TestOpenRelativeDataDir(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, err := Open("data")
+	if err != nil {
+		t.Fatalf("Open relative data dir: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	want, err := filepath.Abs(filepath.Join("data", "chat.db"))
+	if err != nil {
+		t.Fatalf("resolve database path: %v", err)
+	}
+	var seq int
+	var name, file string
+	if err := db.QueryRow("PRAGMA database_list").Scan(&seq, &name, &file); err != nil {
+		t.Fatalf("database_list: %v", err)
+	}
+	if filepath.Clean(file) != filepath.Clean(want) {
+		t.Fatalf("database file = %q, want %q", file, want)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("stat database: %v", err)
+	}
 }
 
 func TestSchemaHasNoUnexpectedMissingTable(t *testing.T) {
