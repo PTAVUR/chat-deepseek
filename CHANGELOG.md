@@ -2,6 +2,12 @@
 
 只记录本分支相对 [chat-demo](https://github.com/deepseek-ai/chat-demo) 的变化；上游已有的聊天界面功能不重复。
 
+## 0.1.1-official0.1.3 - 2026-11-23
+
+### 服务端
+
+- 修复 Windows 上 `setup` 初始化时 SQLite 报 `invalid uri authority: C:` 的问题：数据库路径现在生成合法的 `file:///C:/...` URI，相对数据目录也会先解析成绝对路径。
+
 ## 0.1.0-official0.1.3 - 2026-11-23
 
 首个自托管版本。
