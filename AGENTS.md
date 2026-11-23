@@ -325,7 +325,7 @@ pnpm dev
 - **SSH 配置**：本机 `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` 权限异常，直接 `ssh` / `git push` 会报 `Bad owner or permissions`。仓库已设置 `core.sshCommand = ssh -F /dev/null` 绕过；换到 SSH 正常的机器时可以删除该配置。
 - **pnpm 12 预检**：本机全局 store 在 workspace 外（`~/.local/share/pnpm/store/v11`），DSH 沙箱下 `pnpm type` / `lint` / `build` 前的自动安装检查会报 `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` / 只读文件系统；脚本本身仍会继续执行并通过。依赖未变化时可忽略；真正需要安装依赖时可尝试把 store 指到可写目录（如 `--store-dir /tmp/pnpm-store`），当前环境尚未验证。
 - **上游连通性**：检查 GitHub upstream 时 `git ls-remote` 曾超时；本地 `upstream/main` 跟踪关系正常，同步失败先排查网络或代理。
-- **package version**：`0.1.0-official0.1.3` 是合法的 semver 预发布版本（prerelease），npm 已验证可解析，pnpm 构建也能读取；私有项目不发布 npm，所以可以采用。注意它排序在 `0.1.0` 之前，不要把它当作正式版 `0.1.0` 的替代。
+- **package version**：`0.1.0-official0.1.3` 是合法的 semver 预发布版本（prerelease），npm 已验证可解析，pnpm 构建也能读取；本项目不发布 npm，所以可以采用。注意它排序在 `0.1.0` 之前，不要把它当作正式版 `0.1.0` 的替代。
 - **浏览器存储**：v1 已移除 localStorage/IndexedDB，旧浏览器数据不会自动迁移到服务端；需要保留历史时先在旧版本导出 ZIP，再在新版导入。
 - **README 语言**：只保留中文 `README.md`，英文版已删除；README 保持用户文档定位，试错与决策记录放这里。
 - **UI 文案与视觉**：标题、`appName` 为 `Deepseek`；字标使用 DM Sans 700（OFL，官方界面字体；官方字标本身是定制字形，不能公开使用）。侧边栏和登录页使用 Simple Icons 的 DeepSeek 鲸鱼标志（CC0-1.0）；设置入口是头像 + 用户名菜单，右侧是 `...`；登录页跟随明暗主题（亮色白底 / 暗色官方风格），首页问候语左侧有鲸鱼；系统设置采用官方左右分栏与行式列表，账户资料保存后就地更新，弹窗不关闭、不整页刷新。第三方来源与商标说明见 `THIRD_PARTY_NOTICES.md`。
