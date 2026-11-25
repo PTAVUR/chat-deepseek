@@ -125,6 +125,29 @@ class ServeEvent:
     value: str = ""
 
 
+@dataclass(frozen=True)
+class Info:
+    """`chat-deepseek info` 的只读快照。"""
+
+    version: str
+    os: str
+    arch: str
+    binary: str
+    data_dir: str
+    initialized: bool
+    listen: str
+    public_url: str
+    api_origin: str
+    backup_dir: str
+    service_supported: bool
+    service_scope: str
+    service_installed: bool
+    service_active: bool
+    service_enabled: bool
+    service_unit: str
+    service_linger: bool
+
+
 def parse_users(text: str) -> list[User]:
     """解析 `user list` 的 tabwriter 表格。"""
     users: list[User] = []
@@ -226,6 +249,83 @@ def parse_version(text: str) -> tuple[str, str] | None:
     """解析 `chat-deepseek <version> <goos>/<goarch>`。"""
     match = re.search(r"chat-deepseek\s+(\S+)\s+(\S+)", text)
     return (match.group(1), match.group(2)) if match else None
+
+
+INFO_KEYS = (
+    "version",
+    "os",
+    "arch",
+    "binary",
+    "data_dir",
+    "initialized",
+    "listen",
+    "public_url",
+    "api_origin",
+    "backup_dir",
+    "service_supported",
+    "service_scope",
+    "service_installed",
+    "service_active",
+    "service_enabled",
+    "service_unit",
+    "service_linger",
+)
+
+INFO_BOOL_KEYS = (
+    "initialized",
+    "service_supported",
+    "service_installed",
+    "service_active",
+    "service_enabled",
+    "service_linger",
+)
+
+
+def parse_info(text: str) -> Info:
+    """解析 `info` 的固定 key=value 输出。"""
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        key, separator, value = line.partition("=")
+        if not separator:
+            raise ParseError(f"无法解析 info 行：{line}")
+        values[key.strip()] = value.strip()
+    missing = [key for key in INFO_KEYS if key not in values]
+    if missing:
+        raise ParseError(f"info 缺少字段：{', '.join(missing)}")
+
+    flags: dict[str, bool] = {}
+    for key in INFO_BOOL_KEYS:
+        value = values[key]
+        if value not in ("true", "false"):
+            raise ParseError(f"无法解析 info 布尔值：{key}={value}")
+        flags[key] = value == "true"
+
+    required = ("version", "os", "arch", "binary", "data_dir", "listen", "api_origin", "backup_dir")
+    for key in required:
+        if not values[key]:
+            raise ParseError(f"info 字段为空：{key}")
+
+    return Info(
+        version=values["version"],
+        os=values["os"],
+        arch=values["arch"],
+        binary=values["binary"],
+        data_dir=values["data_dir"],
+        initialized=flags["initialized"],
+        listen=values["listen"],
+        public_url=values["public_url"],
+        api_origin=values["api_origin"],
+        backup_dir=values["backup_dir"],
+        service_supported=flags["service_supported"],
+        service_scope=values["service_scope"],
+        service_installed=flags["service_installed"],
+        service_active=flags["service_active"],
+        service_enabled=flags["service_enabled"],
+        service_unit=values["service_unit"],
+        service_linger=flags["service_linger"],
+    )
 
 
 def parse_serve_event(line: str) -> ServeEvent:
@@ -361,6 +461,32 @@ def explain_failure(
             f"{where}。请关闭正在运行的服务，或换一个端口后重试。",
         )
 
+    if "当前平台不支持 systemd 服务" in combined or "没有检测到运行中的 systemd" in combined:
+        return Failure(
+            "当前平台不支持 systemd 服务",
+            "继续用“启动服务”以前台会话运行；需要常驻时用 tmux/nohup、"
+            "任务计划程序（Windows）或 LaunchAgent（macOS）。",
+        )
+
+    if "无法连接 systemd" in combined or "failed to connect to bus" in lowered:
+        return Failure(
+            "无法连接 systemd",
+            "确认系统由 systemd 启动，并且当前用户有 user manager；"
+            "否则改用“启动服务”以前台会话运行。",
+        )
+
+    if "unit 已存在" in combined:
+        return Failure(
+            "systemd 服务已存在",
+            "刷新服务状态后再操作；需要覆盖 unit 时用 CLI 执行 service install --force。",
+        )
+
+    if "服务未安装" in combined:
+        return Failure(
+            "systemd 服务未安装",
+            "先点“安装服务”，或继续用“启动服务”以前台会话运行。",
+        )
+
     if any(
         marker in lowered
         for marker in (
@@ -443,7 +569,11 @@ def explain_failure(
             "这个数据目录里已经有 Owner。可以直接添加账户，或换一个数据目录。",
         )
 
-    if "数据目录中没有 chat.db" in combined or "数据目录未初始化" in combined:
+    if (
+        "数据目录中没有 chat.db" in combined
+        or "数据目录未初始化" in combined
+        or "数据目录尚未初始化" in combined
+    ):
         return Failure(
             "数据目录还没有初始化",
             "这个目录里没有 chat.db。请先创建 Owner 账户，或检查设置里的数据目录。",

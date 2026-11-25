@@ -126,9 +126,13 @@ jobs:
 
           app = pathlib.Path(sys.argv[1])
           config = {
-              "binary": "",
-              "data_dir": "~/Library/Application Support/chat-deepseek/data",
-              "backup_dir": "~/Library/Application Support/chat-deepseek/data/backups",
+              "version": 2,
+              "connection": "local",
+              "local": {
+                  "binary_dir": "",
+                  "data_dir": "~/Library/Application Support/chat-deepseek/data",
+                  "username": "",
+              },
           }
           (app / "Contents" / "Resources" / "config.gui.json").write_text(
               json.dumps(config, ensure_ascii=False, indent=2) + "\n",

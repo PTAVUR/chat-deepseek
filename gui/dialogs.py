@@ -439,6 +439,15 @@ class BackupDialog(BaseDialog):
         self.accept()
 
 
+def _http_url(value: str) -> bool:
+    """与 CLI 的 config set 保持一致：只接受 http/https 且有主机名。"""
+    value = value.strip()
+    if not (value.startswith("http://") or value.startswith("https://")):
+        return False
+    rest = value.split("://", 1)[1]
+    return bool(rest.split("/", 1)[0])
+
+
 class SettingsDialog(BaseDialog):
     def __init__(
         self,
@@ -455,7 +464,8 @@ class SettingsDialog(BaseDialog):
         self.defaults = defaults
         self._initial_data_dir = data_dir
         self._description(
-            "路径设置保存在 config.gui.json；监听地址、Public URL 和 API 地址写入数据目录的 config.json。"
+            "二进制目录和数据目录保存在 config.gui.json；监听地址、Public URL、"
+            "API 地址和备份地址通过 chat-deepseek config set 写入数据目录的 config.json。"
         )
 
         grid = QGridLayout()
@@ -469,6 +479,7 @@ class SettingsDialog(BaseDialog):
         self.data_dir = _field("数据目录")
         self.data_dir.setText(data_dir)
         self.backup_dir = _field("备份地址")
+        self.backup_dir.setPlaceholderText("留空表示数据目录下的 backups/")
         self.backup_dir.setText(backup_dir)
         self.listen = _field("监听地址")
         self.listen.setText(listen)
@@ -556,22 +567,30 @@ class SettingsDialog(BaseDialog):
         if not data_dir:
             self._show_error("数据目录不能为空")
             return
-        if not backup_dir:
-            self._show_error("备份地址不能为空")
-            return
         if not listen:
             self._show_error("监听地址不能为空")
+            return
+        if backup_dir and not Path(backup_dir).expanduser().is_absolute():
+            self._show_error("备份地址必须是绝对路径，留空表示默认目录")
+            return
+        public_url = self.public_url.text().strip()
+        if public_url and not _http_url(public_url):
+            self._show_error("Public URL 必须以 http:// 或 https:// 开头")
+            return
+        if api_origin and not _http_url(api_origin):
+            self._show_error("API 地址必须以 http:// 或 https:// 开头")
             return
         old_data = Path(self._initial_data_dir).expanduser()
         new_data = Path(data_dir).expanduser()
         if backup_dir == str(old_data / "backups") and new_data != old_data:
-            backup_dir = str(new_data / "backups")
+            # 数据目录换了而备份地址还是旧默认值：清空，让它跟随新数据目录。
+            backup_dir = ""
         self.value = {
             "binary": binary_dir,
             "data_dir": data_dir,
             "backup_dir": backup_dir,
             "listen": listen,
-            "public_url": self.public_url.text().strip(),
+            "public_url": public_url,
             "api_origin": api_origin or server_config.DEFAULT_API_ORIGIN,
         }
         self.accept()

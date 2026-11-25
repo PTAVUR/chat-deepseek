@@ -2,7 +2,7 @@
 
 只记录本分支相对 [chat-demo](https://github.com/deepseek-ai/chat-demo) 的变化；上游已有的聊天界面功能不重复。
 
-## 未发布
+## 0.1.4-official0.1.4 - 2026-11-26
 
 ### 命令行
 
@@ -11,6 +11,14 @@
 - 新增 `service`：Linux systemd 托管，支持 user/system 两种范围（`install` / `uninstall` / `start` / `stop` / `restart` / `status`）。`install` 只生成 unit 并 `daemon-reload`，不启动；`--enable` 只设置开机自启。Windows/macOS 明确不支持，继续前台 `serve` 或平台 supervisor。
 - `backup` / `backup list` / `backup restore` 统一按 `--backup-dir` > `config.json` 的 `backup_dir` > `data/backups` 解析备份地址。
 - 退出码补齐用法错误 `2`；`info`、`config set`、`service` 不需要应用登录。
+
+### 图形界面
+
+- `config.gui.json` 升级到 v2（`version`、`connection`、`local{binary_dir,data_dir,username}`）；旧版顶层字段自动迁移，`backup_dir` 改由 `config set backup_dir` 写入 `config.json`。
+- 设置页和服务状态改用 `info` / `config set`，GUI 不再直接读写 `data/config.json`；监听地址、Public URL、API 地址和备份地址保存后由 `serve` / `backup` 读取。
+- Linux + systemd 增加服务卡片：显示安装、运行、开机自启和 linger 状态，支持 `service install --enable`、启动、停止、卸载；未安装时保留前台会话模式，关闭 GUI 不会停止 systemd 服务。
+- Windows/macOS 不支持 systemd，继续使用会话模式；常驻交给平台 supervisor。
+- GUI 测试增加到 80 个，新增 v1→v2 迁移、`info` 解析、设置写 `config.json` 和 fake systemd 服务流程验证。
 
 ## 0.1.3-official0.1.4 - 2026-11-25
 

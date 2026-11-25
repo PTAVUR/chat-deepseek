@@ -452,5 +452,91 @@ class ServeFailureTest(unittest.TestCase):
         self.assertIn("奇怪的失败", failure.details or "")
 
 
+class ParseInfoTest(unittest.TestCase):
+    OUTPUT = """version=0.1.4-official0.1.4
+os=linux
+arch=amd64
+binary=/opt/chat-deepseek
+data_dir=/srv/data
+initialized=true
+listen=127.0.0.1:8090
+public_url=
+api_origin=https://api.deepseek.com
+backup_dir=/srv/data/backups
+service_supported=true
+service_scope=user
+service_installed=true
+service_active=false
+service_enabled=true
+service_unit=/home/alice/.config/systemd/user/chat-deepseek.service
+service_linger=false
+"""
+
+    def test_info(self) -> None:
+        info = parsing.parse_info(self.OUTPUT)
+        self.assertEqual(info.version, "0.1.4-official0.1.4")
+        self.assertEqual(info.os, "linux")
+        self.assertEqual(info.arch, "amd64")
+        self.assertEqual(info.data_dir, "/srv/data")
+        self.assertTrue(info.initialized)
+        self.assertEqual(info.listen, "127.0.0.1:8090")
+        self.assertEqual(info.public_url, "")
+        self.assertEqual(info.backup_dir, "/srv/data/backups")
+        self.assertTrue(info.service_supported)
+        self.assertEqual(info.service_scope, "user")
+        self.assertTrue(info.service_installed)
+        self.assertFalse(info.service_active)
+        self.assertTrue(info.service_enabled)
+        self.assertTrue(info.service_unit.endswith("chat-deepseek.service"))
+        self.assertFalse(info.service_linger)
+
+    def test_missing_field(self) -> None:
+        with self.assertRaises(parsing.ParseError):
+            parsing.parse_info("version=1\nos=linux\n")
+
+    def test_bad_boolean(self) -> None:
+        text = self.OUTPUT.replace("initialized=true", "initialized=yes")
+        with self.assertRaises(parsing.ParseError):
+            parsing.parse_info(text)
+
+
+class ServiceFailureTest(unittest.TestCase):
+    def test_unsupported_platform(self) -> None:
+        failure = parsing.explain_failure(
+            "错误： 当前平台不支持 systemd 服务；Windows 请用任务计划程序。",
+            "",
+            ("service", "install"),
+            1,
+        )
+        self.assertEqual(failure.title, "当前平台不支持 systemd 服务")
+
+    def test_systemd_unavailable(self) -> None:
+        failure = parsing.explain_failure(
+            "错误： systemctl start 失败：无法连接 systemd，确认系统由 systemd 启动",
+            "",
+            ("service", "start"),
+            1,
+        )
+        self.assertEqual(failure.title, "无法连接 systemd")
+
+    def test_unit_exists(self) -> None:
+        failure = parsing.explain_failure(
+            "错误： unit 已存在：/home/alice/.config/systemd/user/chat-deepseek.service；如需覆盖请加 --force",
+            "",
+            ("service", "install"),
+            1,
+        )
+        self.assertEqual(failure.title, "systemd 服务已存在")
+
+    def test_service_not_installed(self) -> None:
+        failure = parsing.explain_failure(
+            "错误： 服务未安装（/home/alice/.config/systemd/user/chat-deepseek.service）；先运行 chat-deepseek service install",
+            "",
+            ("service", "start"),
+            1,
+        )
+        self.assertEqual(failure.title, "systemd 服务未安装")
+
+
 if __name__ == "__main__":
     unittest.main()

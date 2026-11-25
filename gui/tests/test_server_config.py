@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -25,6 +23,12 @@ class DefaultsTest(unittest.TestCase):
         self.assertEqual(values["api_origin"], server_config.DEFAULT_API_ORIGIN)
         self.assertEqual(values["public_url"], "")
 
+    def test_default_backup_dir(self) -> None:
+        self.assertEqual(
+            server_config.default_backup_dir("/srv/data"),
+            "/srv/data/backups",
+        )
+
 
 class MacDefaultsTest(unittest.TestCase):
     def test_data_lives_in_application_support(self) -> None:
@@ -41,81 +45,6 @@ class MacDefaultsTest(unittest.TestCase):
             values["backup_dir"],
             "/tmp/home/Library/Application Support/chat-deepseek/data/backups",
         )
-
-
-class SaveTest(unittest.TestCase):
-    def test_writes_values_and_preserves_unknown_fields(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            data = Path(temp, "data")
-            data.mkdir()
-            Path(data, "config.json").write_text(
-                json.dumps({"listen": "old", "future": {"keep": True}}),
-                encoding="utf-8",
-            )
-            server_config.save(
-                data,
-                {
-                    "listen": "0.0.0.0:9000",
-                    "public_url": "https://chat.example.com",
-                    "api_origin": "https://api.example.com",
-                },
-            )
-            raw = json.loads(Path(data, "config.json").read_text(encoding="utf-8"))
-            values = server_config.load(data)
-            mode = os.stat(Path(data, "config.json")).st_mode & 0o777
-        self.assertEqual(raw["future"], {"keep": True})
-        self.assertEqual(values["listen"], "0.0.0.0:9000")
-        self.assertEqual(values["public_url"], "https://chat.example.com")
-        self.assertEqual(values["api_origin"], "https://api.example.com")
-        if os.name == "posix":
-            self.assertEqual(mode, 0o600)
-
-    def test_creates_data_directory(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            data = Path(temp, "nested", "data")
-            server_config.save(data, {"listen": "127.0.0.1:9000"})
-            self.assertTrue(Path(data, "config.json").is_file())
-
-
-class LoadTest(unittest.TestCase):
-    def test_missing_file_uses_defaults(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            values = server_config.load(temp)
-        self.assertEqual(values["listen"], server_config.DEFAULT_LISTEN)
-        self.assertEqual(values["api_origin"], server_config.DEFAULT_API_ORIGIN)
-        self.assertEqual(values["public_url"], "")
-
-    def test_reads_existing_config(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            Path(temp, "config.json").write_text(
-                json.dumps(
-                    {
-                        "listen": "0.0.0.0:9000",
-                        "public_url": "https://chat.example.com",
-                        "api_origin": "https://api.example.com",
-                    }
-                ),
-                encoding="utf-8",
-            )
-            values = server_config.load(temp)
-        self.assertEqual(values["listen"], "0.0.0.0:9000")
-        self.assertEqual(values["public_url"], "https://chat.example.com")
-        self.assertEqual(values["api_origin"], "https://api.example.com")
-
-    def test_blank_values_fall_back(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            Path(temp, "config.json").write_text(
-                json.dumps({"listen": " ", "api_origin": ""}), encoding="utf-8"
-            )
-            values = server_config.load(temp)
-        self.assertEqual(values["listen"], server_config.DEFAULT_LISTEN)
-        self.assertEqual(values["api_origin"], server_config.DEFAULT_API_ORIGIN)
-
-    def test_invalid_json_falls_back(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            Path(temp, "config.json").write_text("{", encoding="utf-8")
-            values = server_config.load(temp)
-        self.assertEqual(values["listen"], server_config.DEFAULT_LISTEN)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 基于 DeepSeek API 的自托管聊天应用：Go 服务端 + React Web 客户端。账户、会话、附件、设置和 API Key 都保存在服务器上，浏览器只保留登录 Cookie 和内存中的 CSRF token。
 
-本项目是 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) 的 fork，当前版本 `0.1.3-official0.1.4`，代码基线为上游 `v0.1.4`。仓库位于 [GitHub](https://github.com/elegantgx/chat-deepseek)，变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+本项目是 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) 的 fork，当前版本 `0.1.4-official0.1.4`，代码基线为上游 `v0.1.4`。仓库位于 [GitHub](https://github.com/elegantgx/chat-deepseek)，变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 运行
 
@@ -61,7 +61,7 @@ CGO_ENABLED=0 go build -o chat-deepseek ./cmd/chat-deepseek
 
 ## 图形界面（可选）
 
-`gui/app.py` 是 Python + PySide6（Qt 6）管理界面：按钮只负责拼出 `chat-deepseek` 子命令，输出由 `gui/parsing.py` 解析成账户列表、服务状态和提示；已知失败会翻译成可操作说明，识别不了才显示原始输出。账户、会话、备份逻辑仍全部在 `chat-deepseek` 里，不另写一套。它覆盖 `setup`、`serve`、`backup`、`user ...`、`login` / `logout` / `whoami`、`version` 和 `help`；`info`、`config set`、`service` 目前只在 CLI 提供。聊天仍由 `serve` 提供的现有 Web UI 完成。
+`gui/app.py` 是 Python + PySide6（Qt 6）管理界面：按钮只负责拼出 `chat-deepseek` 子命令，输出由 `gui/parsing.py` 解析成账户列表、服务状态和提示；已知失败会翻译成可操作说明，识别不了才显示原始输出。账户、会话、备份逻辑仍全部在 `chat-deepseek` 里，不另写一套。它覆盖 `setup`、`serve`、`backup`、`user ...`、`login` / `logout` / `whoami`、`version` 和 `help`，并通过 `info` / `config set` / `service` 显示服务端配置、保存设置和管理 systemd 服务。聊天仍由 `serve` 提供的现有 Web UI 完成。
 
 依赖装在 `gui/.venv`（已 gitignore）。在仓库根目录：
 
@@ -73,9 +73,9 @@ gui/.venv/bin/python gui/app.py
 
 Windows 用 `gui\.venv\Scripts\python gui\app.py`；更完整的命令见 [gui/README.md](gui/README.md)。需要 Python 3.10+ 和 `requirements.txt` 里的 PySide6。Linux 还缺 Qt 的 xcb 运行库时，Debian/Ubuntu 可安装 `libxcb-cursor0`、`libxkbcommon-x11-0`、`libgl1`、`libegl1` 等系统包。
 
-`gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。设置页的二进制目录、数据目录、备份地址保存在平台用户配置目录的 `config.gui.json`：Linux 是 `~/.config/chat-deepseek/`，macOS 是 `~/Library/Application Support/chat-deepseek/`，Windows 是 `%APPDATA%\chat-deepseek\`。监听地址、Public URL 和 API 地址写入数据目录的 `config.json`，`serve` 启动时直接读取；GUI 的备份地址会作为 `--backup-dir` 传给 CLI，覆盖 `config.json` 里的 `backup_dir`。左下角的“恢复默认”在 Windows/Linux 回到二进制同级 `data/`、`data/backups/`，在 macOS 回到 `~/Library/Application Support/chat-deepseek/data/`；监听地址和 API 地址回到 `127.0.0.1:8090` 和官方地址。数据卡片可以立即备份、查看备份记录并从记录中恢复；恢复前必须先停止服务。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里；上次登录的用户名记在 `config.gui.json`，不保存密码。
+`gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。GUI 本地配置是平台用户配置目录的 `config.gui.json`（v2，旧版会自动迁移）：Linux 是 `~/.config/chat-deepseek/`，macOS 是 `~/Library/Application Support/chat-deepseek/`，Windows 是 `%APPDATA%\chat-deepseek\`；里面只保存二进制目录、数据目录和上次登录的用户名。监听地址、Public URL、API 地址和备份地址通过 `chat-deepseek config set` 写入数据目录的 `config.json`，`serve` 启动时直接读取。左下角的“恢复默认”在 Windows/Linux 回到二进制同级 `data/`、`data/backups/`，在 macOS 回到 `~/Library/Application Support/chat-deepseek/data/`；监听地址和 API 地址回到 `127.0.0.1:8090` 和官方地址。数据卡片可以立即备份、查看备份记录并从记录中恢复；恢复前必须先停止服务。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里；上次登录的用户名记在 `config.gui.json`，不保存密码。
 
-关闭窗口会停止由它启动的服务，并退出当前 GUI 的 CLI 登录；外部启动的 `chat-deepseek serve` 不会被它接管。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止服务是强制结束进程；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
+Linux + systemd 时，服务卡片可以安装、启动、停止和卸载 systemd 用户服务；安装只写 unit 并设置开机自启，启动后才真正运行。未安装服务时走前台会话模式，关闭窗口会停止该进程；已安装的 systemd 服务不会被关闭窗口停止。Windows/macOS 没有 systemd，继续使用会话模式，常驻交给任务计划程序/NSSM 或 LaunchAgent。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止会话进程是强制结束；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
 
 GUI 使用 CLI 的登录态：不登录也能启停服务和改设置，账户区显示锁图标，备份区提示登录后查看；点击登录、刷新、添加或任一备份按钮会弹出登录框。只有 Admin 和 Owner 能登录，按钮会按当前身份置灰不可执行的操作；登录 15 分钟后过期，关闭 GUI 会自动退出登录。
 
@@ -111,7 +111,7 @@ chat-deepseek-<版本>-macos-arm64.zip
   chat-deepseek-<版本>-macos-arm64.dmg
 ```
 
-DMG 内只有 `chat-deepseek-gui.app` 和指向 `/Applications` 的链接；CLI、`config.gui.json` 和三份文档都在 `.app/Contents/Resources` 里。把 `.app` 拖到 Applications 即可；`config.gui.json` 把数据目录和备份目录指到 `~/Library/Application Support/chat-deepseek/`，`.app` 内的副本作为首次启动的模板，真正的用户配置仍写这个标准目录。macOS 包不再附带源码。
+DMG 内只有 `chat-deepseek-gui.app` 和指向 `/Applications` 的链接；CLI、`config.gui.json` 和三份文档都在 `.app/Contents/Resources` 里。把 `.app` 拖到 Applications 即可；`config.gui.json` 使用 v2 结构，把 `local.data_dir` 指到 `~/Library/Application Support/chat-deepseek/data`；`backup_dir` 由首次运行后的 `info` / `config set` 管理。`.app` 内的副本作为首次启动的模板，真正的用户配置仍写这个标准目录。macOS 包不再附带源码。
 
 Linux 不附带预编译 GUI。PyInstaller onefile 会绑定构建机的 glibc，无法同时覆盖 Ubuntu、Fedora 等不同版本；`gui/` 是可直接构建的 GUI 源码，按 [gui/README.md](gui/README.md) 在解压目录创建 venv、安装 PySide6，再运行 `gui/.venv/bin/python gui/app.py`。CLI 是静态二进制，可以直接使用。`gui/` 是完整源码中 `src/gui/` 的副本，方便解压后直接编辑；不使用符号链接。
 

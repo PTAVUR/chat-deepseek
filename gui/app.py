@@ -69,25 +69,42 @@ class MainWindow(QMainWindow):
         self.defaults = server_config.defaults(binary.parent)
         self.gui_config_path = gui_config.default_path()
 
-        initial = dict(self.defaults)
         saved = gui_config.load(self.gui_config_path)
-        if not saved:
+        if saved.empty:
             for seed in gui_config.seed_paths():
-                saved = gui_config.load(seed)
-                if saved:
+                candidate = gui_config.load(seed)
+                if not candidate.empty:
+                    saved = candidate
                     break
-        for key in ("binary", "data_dir", "backup_dir"):
-            if saved.get(key):
-                initial[key] = saved[key]
-        self.last_username = saved.get("username", "")
+        self.connection = saved.connection
+        self.legacy_backup_dir = saved.legacy_backup_dir
+        self.config_migration_error: str | None = None
+        if saved.migrated:
+            try:
+                gui_config.save(self.gui_config_path, saved)
+            except OSError as exc:
+                self.config_migration_error = str(exc)
+
+        initial = dict(self.defaults)
+        if saved.binary_dir:
+            initial["binary"] = saved.binary_dir
+        if saved.data_dir:
+            initial["data_dir"] = saved.data_dir
+        else:
+            initial["data_dir"] = str(
+                server_config.default_data_dir(initial["binary"])
+            )
+        self.last_username = saved.username
         saved_binary = Path(initial["binary"]).expanduser()
         if not saved_binary.is_file() and not cli.binary_in(saved_binary).is_file():
             initial["binary"] = self.defaults["binary"]
+            if not saved.data_dir:
+                initial["data_dir"] = str(
+                    server_config.default_data_dir(initial["binary"])
+                )
 
-        loaded = server_config.load(initial["data_dir"])
-        initial.update(
-            {key: loaded[key] for key in ("listen", "public_url", "api_origin")}
-        )
+        # 服务端配置统一由 `chat-deepseek info` 读取；这里先填默认值。
+        initial["backup_dir"] = server_config.default_backup_dir(initial["data_dir"])
         self.defaults = server_config.defaults(Path(initial["binary"]))
 
         self.binary_dir = initial["binary"]
@@ -96,6 +113,14 @@ class MainWindow(QMainWindow):
         self.listen = initial["listen"]
         self.public_url = initial["public_url"]
         self.api_origin = initial["api_origin"]
+        self.info: parsing.Info | None = None
+        self.info_generation = 0
+        self.service_supported = False
+        self.service_installed = False
+        self.service_active = False
+        self.service_enabled = False
+        self.service_unit = ""
+        self.service_linger = False
 
         self.users: list[parsing.User] = []
         self.selected: str | None = None
@@ -226,6 +251,18 @@ class MainWindow(QMainWindow):
         self.stop_button.setMinimumWidth(92)
         self.stop_button.clicked.connect(self.stop_server)
         actions.addWidget(self.stop_button)
+        self.install_button = widgets.button("安装服务", "secondary", height=36)
+        self.install_button.setMinimumWidth(92)
+        self.install_button.setToolTip("安装 systemd 用户服务并设置开机自启")
+        self.install_button.clicked.connect(self.install_service)
+        self.install_button.hide()
+        actions.addWidget(self.install_button)
+        self.uninstall_button = widgets.button("卸载服务", "secondary", height=36)
+        self.uninstall_button.setMinimumWidth(92)
+        self.uninstall_button.setToolTip("停止并删除 systemd unit，不删除数据")
+        self.uninstall_button.clicked.connect(self.uninstall_service)
+        self.uninstall_button.hide()
+        actions.addWidget(self.uninstall_button)
         self.open_button = widgets.button("打开页面", "secondary", height=36)
         self.open_button.setMinimumWidth(92)
         self.open_button.clicked.connect(self.open_page)
@@ -415,12 +452,12 @@ class MainWindow(QMainWindow):
     def _save_gui_config(self) -> None:
         gui_config.save(
             self.gui_config_path,
-            {
-                "binary": self.binary_dir,
-                "data_dir": self.data_dir,
-                "backup_dir": self.backup_dir,
-                "username": self.last_username,
-            },
+            gui_config.Config(
+                connection=self.connection,
+                binary_dir=self.binary_dir,
+                data_dir=self.data_dir,
+                username=self.last_username,
+            ),
         )
 
     def _update_identity_ui(self) -> None:
@@ -770,8 +807,8 @@ class MainWindow(QMainWindow):
 
     # ---- 参数 ---------------------------------------------------------
 
-    def _binary(self) -> str:
-        value = self.binary_dir.strip()
+    def _resolve_binary(self, binary_dir: str) -> str:
+        value = binary_dir.strip()
         if not value:
             raise RuntimeError("请选择 chat-deepseek 所在的二进制目录")
         path = Path(value).expanduser()
@@ -782,13 +819,12 @@ class MainWindow(QMainWindow):
             return str(candidate.resolve())
         raise RuntimeError(f"目录里没有 {cli.binary_name()}：{path}")
 
+    def _binary(self) -> str:
+        return self._resolve_binary(self.binary_dir)
+
     def _data_args(self) -> list[str]:
         value = os.path.expanduser(self.data_dir.strip())
         return ["--data-dir", value] if value else []
-
-    def _backup_args(self) -> list[str]:
-        value = os.path.expanduser(self.backup_dir.strip())
-        return ["--backup-dir", value] if value else []
 
     def _listen_args(self) -> list[str]:
         value = self.listen.strip()
@@ -837,32 +873,153 @@ class MainWindow(QMainWindow):
         self._render_account_state()
         self._update_backup_placeholder()
         self._update_identity_ui()
+        self._update_service_ui()
         self._update_buttons()
-        self._load_version()
+        if self.config_migration_error:
+            self._toast(
+                f"config.gui.json 迁移失败：{self.config_migration_error}",
+                error=True,
+            )
+        self._load_info()
 
-    def _load_version(self) -> None:
+    def _load_info(self, then: Callable[[], None] | None = None) -> None:
+        """读取 `info`：服务端配置、初始化状态和 systemd 状态。"""
         try:
             binary = self._binary()
         except RuntimeError:
             return
+        self.info_generation += 1
+        generation = self.info_generation
+        args = ["info", *self._data_args()]
 
         def work() -> None:
             try:
-                result = cli.run_command(binary, ["version"])
-            except Exception:  # noqa: BLE001 - 版本只影响页脚
-                return
-            self._post(lambda: self._apply_version(result))
+                result = cli.run_command(binary, args)
+            except Exception as exc:  # noqa: BLE001 - 直接呈现在提示里
+                result = cli.CommandResult(tuple(args), 1, "", str(exc))
+            self._post(lambda: self._apply_info(result, generation, then))
 
         threading.Thread(target=work).start()
 
-    def _apply_version(self, result: cli.CommandResult) -> None:
-        if self.closing:
+    def _apply_info(
+        self,
+        result: cli.CommandResult,
+        generation: int,
+        then: Callable[[], None] | None,
+    ) -> None:
+        if self.closing or generation != self.info_generation:
             return
-        version = parsing.parse_version(result.stdout)
-        if version:
-            self.version_label.setText(f"chat-deepseek {version[0]} · {version[1]}")
+        if not result.ok:
+            failure = parsing.explain_failure(
+                result.stderr, result.stdout, result.args, result.code
+            )
+            self._error(failure.title, failure.message, failure.details)
+            return
+        try:
+            info = parsing.parse_info(result.stdout)
+        except parsing.ParseError as exc:
+            failure = parsing.unknown_output(
+                "无法识别 chat-deepseek 返回的服务信息。",
+                result.stdout,
+                result.stderr,
+            )
+            self._error(
+                failure.title,
+                failure.message,
+                f"{exc}\n\n{failure.details or ''}".strip(),
+            )
+            return
+        self.info = info
+        self.data_ready = info.initialized
+        self.listen = info.listen
+        self.public_url = info.public_url
+        self.api_origin = info.api_origin
+        self.backup_dir = info.backup_dir
+        self.service_supported = info.service_supported
+        self.service_installed = info.service_installed
+        self.service_active = info.service_active
+        self.service_enabled = info.service_enabled
+        self.service_unit = info.service_unit
+        self.service_linger = info.service_linger
+        self.version_label.setText(
+            f"chat-deepseek {info.version} · {info.os}/{info.arch}"
+        )
+        self._update_data_summary()
+        self._render_account_state()
+        self._update_identity_ui()
+        self._update_backup_placeholder()
+        self._update_service_ui()
+        self._update_buttons()
+        self._migrate_legacy_backup_dir()
+        if then is not None:
+            then()
+
+    def _migrate_legacy_backup_dir(self) -> None:
+        """把 v1 config.gui.json 里的备份地址写进 config.json。"""
+        legacy = self.legacy_backup_dir
+        if not legacy or self.info is None or self.busy:
+            return
+        self.legacy_backup_dir = ""
+        default_dir = server_config.default_backup_dir(self.info.data_dir)
+        if legacy == default_dir or self.info.backup_dir != default_dir:
+            return
+        self._execute(
+            [
+                "config",
+                "set",
+                "backup_dir",
+                legacy,
+                "--data-dir",
+                self.info.data_dir,
+            ],
+            on_success=lambda _result: self._after_backup_dir_migration(),
+            on_failure=lambda failure, _result: self._toast(
+                f"旧备份地址未迁移：{failure.message}", error=True
+            ),
+        )
+
+    def _after_backup_dir_migration(self) -> None:
+        self._toast("已把旧备份地址写入 config.json")
+        self._load_info()
+
+    def _update_service_ui(self) -> None:
+        if not hasattr(self, "status_pill"):
+            return
+        if self.server is not None and self.server.running:
+            # serve 日志会更新监听地址和运行状态。
+            return
+        info = self.info
+        if info is None:
+            self._set_status("尚未启动", "muted", "正在读取服务状态…")
+            return
+        if info.service_installed:
+            if info.service_active:
+                detail = "systemd 用户服务"
+                if info.service_enabled:
+                    detail += " · 开机自启"
+                if not info.service_linger:
+                    detail += " · linger 未开启"
+                self._set_status("运行中", "success", detail)
+            else:
+                detail = "systemd 用户服务 · 已安装"
+                if not info.service_enabled:
+                    detail += " · 未设置开机自启"
+                self._set_status("已停止", "muted", detail)
+            tooltip = f"unit：{info.service_unit}" if info.service_unit else ""
+            if info.service_supported and not info.service_linger:
+                tooltip += (
+                    "\n未开启 linger：注销后服务会停止。"
+                    "执行 loginctl enable-linger <user>。"
+                )
+            self.status_detail.setToolTip(tooltip.strip())
+            return
+        if info.service_supported:
+            self._set_status("未运行", "muted", "会话模式（未安装 systemd 服务）")
         else:
-            self.version_label.setText("chat-deepseek · 版本未知")
+            self._set_status(
+                "未运行", "muted", "会话模式（当前平台不支持 systemd 服务）"
+            )
+        self.status_detail.setToolTip("")
 
     # ---- 账户 ---------------------------------------------------------
 
@@ -1114,7 +1271,9 @@ class MainWindow(QMainWindow):
     def _update_buttons(self) -> None:
         if not hasattr(self, "start_button"):
             return
-        running = self.server is not None and self.server.running
+        child_running = self.server is not None and self.server.running
+        service_running = self.service_installed and self.service_active
+        running = child_running or service_running
         busy = self.busy
         identity = self.identity
         logged = identity is not None
@@ -1122,11 +1281,29 @@ class MainWindow(QMainWindow):
         admin = identity is not None and identity.is_admin
         owner = identity is not None and identity.is_owner
 
+        child_mode = not self.service_installed
+        self.start_button.setText("临时启动" if self.service_supported and child_mode else "启动服务")
+        self.start_button.setToolTip(
+            "以当前窗口启动前台进程，关闭窗口会停止"
+            if child_mode
+            else "通过 systemd 用户服务启动"
+        )
         self.start_button.setEnabled(not running and not busy)
         self.stop_button.setEnabled(
             running and not self.server_stopping and not busy
         )
-        self.open_button.setEnabled((running or self.server_url is not None) and not busy)
+        self.open_button.setEnabled(running and not busy)
+        self.install_button.setVisible(
+            self.service_supported and not self.service_installed
+        )
+        self.install_button.setEnabled(not busy and self.data_ready)
+        self.install_button.setToolTip(
+            "" if self.data_ready else "先初始化数据目录"
+        )
+        self.uninstall_button.setVisible(
+            self.service_supported and self.service_installed
+        )
+        self.uninstall_button.setEnabled(not busy)
         self.refresh_button.setEnabled(
             not busy and not self.users_loading and (logged or can_prompt)
         )
@@ -1232,6 +1409,7 @@ class MainWindow(QMainWindow):
         self.data_ready = True
         self._reset_identity_state()
         self._toast("Owner 已创建，请登录")
+        self._load_info()
         self._login(username=username)
 
     def add_user(self) -> None:
@@ -1342,14 +1520,20 @@ class MainWindow(QMainWindow):
     # ---- 服务 ---------------------------------------------------------
 
     def start_server(self) -> None:
+        if self.service_installed:
+            self._start_systemd_service()
+            return
         if self.server is not None and self.server.running:
             return
+        self._start_session()
+
+    def _start_session(self) -> None:
         try:
             binary = self._binary()
         except RuntimeError as exc:
             self._error("chat-deepseek", str(exc))
             return
-        # 服务端配置由 serve 从 data/config.json 读取；GUI 只负责把设置写进去。
+        # 服务端配置由 serve 从 config.json 读取；GUI 只负责通过 config set 写入。
         args = ["serve", "--no-browser", *self._data_args()]
 
         self.server_url = None
@@ -1380,6 +1564,38 @@ class MainWindow(QMainWindow):
         self._set_status("启动中…", "warning", "等待监听地址")
         self._update_buttons()
 
+    def _start_systemd_service(self) -> None:
+        if self.service_active:
+            self._toast("服务已经在运行")
+            return
+        # 已安装 systemd 服务时不再让 GUI 进程抢占同一端口。
+        if self.server is not None and self.server.running:
+            self.server_stopping = True
+            self.server.stop(wait=True, timeout=5)
+            self.server = None
+            self.server_url = None
+            self.server_address = None
+        self.auto_opened = False
+        self._execute(
+            ["service", "start"],
+            on_success=lambda _result: self._after_service_started(),
+        )
+
+    def _after_service_started(self) -> None:
+        self._toast("服务已启动")
+        self._load_info(then=self._open_after_service_start)
+
+    def _open_after_service_start(self) -> None:
+        if (
+            self.closing
+            or not self.auto_switch.isChecked()
+            or self.auto_opened
+            or not self.service_active
+        ):
+            return
+        self.auto_opened = True
+        self._open_url(self._page_url())
+
     def _handle_serve_line(self, generation: int, line: str) -> None:
         if generation != self.server_generation or self.server is None:
             return
@@ -1407,7 +1623,7 @@ class MainWindow(QMainWindow):
         self.server_address = None
         self.server_stopping = False
         self.auto_opened = False
-        self._set_status("未运行", "muted", "尚未启动")
+        self._update_service_ui()
         self._update_buttons()
         if code != 0 and not was_stopping and not self.closing:
             failure = parsing.explain_serve_failure(self.server_tail, code)
@@ -1416,6 +1632,9 @@ class MainWindow(QMainWindow):
             self._toast("服务已停止")
 
     def stop_server(self) -> None:
+        if self.service_installed:
+            self._stop_systemd_service()
+            return
         if self.server is None or not self.server.running:
             self._toast("服务没有在运行", error=True)
             return
@@ -1424,8 +1643,78 @@ class MainWindow(QMainWindow):
         self._update_buttons()
         self.server.stop()
 
+    def _stop_systemd_service(self) -> None:
+        child_running = self.server is not None and self.server.running
+        if not self.service_active and not child_running:
+            self._toast("服务没有在运行", error=True)
+            return
+        if child_running:
+            self.server_stopping = True
+            self.server.stop(wait=True, timeout=5)
+            self.server = None
+            self.server_url = None
+            self.server_address = None
+        self._set_status("正在停止…", "warning", "正在停止 systemd 服务")
+        self._update_buttons()
+        self._execute(
+            ["service", "stop"],
+            on_success=lambda _result: self._after_service_stopped(),
+        )
+
+    def _after_service_stopped(self) -> None:
+        self.server_url = None
+        self._toast("服务已停止")
+        self._load_info()
+
+    def install_service(self) -> None:
+        if not self.data_ready:
+            self._toast("先初始化数据目录，再安装服务", error=True)
+            return
+        if not dialogs.ask_confirm(
+            self,
+            "安装服务",
+            "安装为 systemd 用户服务并设置开机自启？\n\n"
+            "安装后不会立即启动；注销后要保住服务还需要开启 linger。",
+        ):
+            return
+        self._execute(
+            ["service", "install", "--enable", *self._data_args()],
+            on_success=self._after_service_install,
+        )
+
+    def _after_service_install(self, result: cli.CommandResult) -> None:
+        details = result.stderr.strip()
+        if details:
+            self._error(
+                "服务已安装",
+                "已写入 systemd unit 并设置开机自启；服务尚未启动。",
+                details,
+            )
+        else:
+            self._toast("服务已安装，尚未启动")
+        self._load_info()
+
+    def uninstall_service(self) -> None:
+        if not dialogs.ask_confirm(
+            self,
+            "卸载服务",
+            "停止并删除 systemd 用户服务？数据目录不会被删除。",
+            danger=True,
+        ):
+            return
+        self._execute(
+            ["service", "uninstall"],
+            on_success=lambda _result: self._after_service_uninstall(),
+        )
+
+    def _after_service_uninstall(self) -> None:
+        self.server_url = None
+        self._toast("服务已卸载")
+        self._load_info()
+
     def open_page(self) -> None:
-        if self.server is None and self.server_url is None:
+        running = self.server is not None and self.server.running
+        if not running and not (self.service_installed and self.service_active):
             self._toast("服务没有在运行", error=True)
             return
         self._open_url(self._page_url())
@@ -1442,7 +1731,7 @@ class MainWindow(QMainWindow):
         if not self._require_owner():
             return
         self._execute(
-            ["backup", *self._data_args(), *self._backup_args()],
+            ["backup", *self._data_args()],
             on_success=self._after_backup,
         )
 
@@ -1470,7 +1759,6 @@ class MainWindow(QMainWindow):
                 "--output",
                 target,
                 *self._data_args(),
-                *self._backup_args(),
             ],
             on_success=self._after_backup,
         )
@@ -1487,7 +1775,7 @@ class MainWindow(QMainWindow):
             return
         self.backups_loading = True
         generation = self.session_generation
-        args = ["backup", "list", *self._data_args(), *self._backup_args()]
+        args = ["backup", "list", *self._data_args()]
 
         def work() -> None:
             try:
@@ -1558,7 +1846,7 @@ class MainWindow(QMainWindow):
         if not self._require_owner():
             return
         self._execute(
-            ["backup", "list", *self._data_args(), *self._backup_args()],
+            ["backup", "list", *self._data_args()],
             on_success=self._open_backup_records,
         )
 
@@ -1600,7 +1888,6 @@ class MainWindow(QMainWindow):
                 "restore",
                 "--yes",
                 *self._data_args(),
-                *self._backup_args(),
                 name,
             ],
             on_success=lambda _result: self._after_restore(name),
@@ -1611,6 +1898,7 @@ class MainWindow(QMainWindow):
         self.selected = None
         self.backups = []
         self._refresh_data_state()
+        self._load_info()
         stamp = parsing.parse_backup_time(name)
         label = stamp.strftime("%Y-%m-%d %H:%M:%S") if stamp else name
         self._reset_identity_state()
@@ -1663,49 +1951,144 @@ class MainWindow(QMainWindow):
         if not isinstance(dialog.value, dict):
             return
         value = dialog.value
-        binary = str(value["binary"])
-        data_dir = str(value["data_dir"])
-        backup_dir = str(value["backup_dir"])
+        binary_dir = str(value["binary"])
+        data_dir = os.path.expanduser(str(value["data_dir"]))
+        backup_dir = os.path.expanduser(str(value["backup_dir"]))
         listen = str(value["listen"])
         public_url = str(value["public_url"])
         api_origin = str(value["api_origin"])
+        try:
+            binary = self._resolve_binary(binary_dir)
+        except RuntimeError as exc:
+            self._error("chat-deepseek", str(exc))
+            return
+        if self.busy:
+            self._toast("正在执行上一条命令", error=True)
+            return
+
         data_changed = (
             Path(data_dir).expanduser() != Path(self.data_dir).expanduser()
         )
-        had_identity = self.identity is not None
+        changed = self._settings_changes(
+            data_changed, listen, public_url, api_origin, backup_dir
+        )
         old_binary = self.binary_dir
         old_data = self.data_dir
         old_default_data = self.defaults["data_dir"]
-        try:
-            server_config.save(
-                data_dir,
-                {
-                    "listen": listen,
-                    "public_url": public_url,
-                    "api_origin": api_origin,
-                },
+        had_identity = self.identity is not None
+
+        self._set_busy(True)
+
+        def work() -> None:
+            for key, value_text in changed:
+                args = ["config", "set", key, value_text]
+                if data_dir.strip():
+                    args += ["--data-dir", data_dir]
+                try:
+                    result = cli.run_command(binary, args)
+                except Exception as exc:  # noqa: BLE001 - 直接呈现在提示里
+                    result = cli.CommandResult(tuple(args), 1, "", str(exc))
+                if not result.ok:
+                    self._post(lambda r=result: self._settings_failed(r))
+                    return
+            self._post(
+                lambda: self._settings_saved(
+                    binary_dir,
+                    data_dir,
+                    backup_dir,
+                    listen,
+                    public_url,
+                    api_origin,
+                    data_changed,
+                    had_identity,
+                    old_binary,
+                    old_data,
+                    old_default_data,
+                )
             )
+
+        threading.Thread(target=work).start()
+
+    def _settings_changes(
+        self,
+        data_changed: bool,
+        listen: str,
+        public_url: str,
+        api_origin: str,
+        backup_dir: str,
+    ) -> list[tuple[str, str]]:
+        """只写变化的项；换数据目录时把全部配置复制到新目录。"""
+        current = {
+            "listen": self.listen,
+            "public_url": self.public_url,
+            "api_origin": self.api_origin,
+            "backup_dir": self.backup_dir,
+        }
+        desired = {
+            "listen": listen,
+            "public_url": public_url,
+            "api_origin": api_origin,
+            "backup_dir": backup_dir,
+        }
+        return [
+            (key, desired[key])
+            for key in current
+            if data_changed or desired[key] != current[key]
+        ]
+
+    def _settings_failed(self, result: cli.CommandResult) -> None:
+        self._set_busy(False)
+        failure = parsing.explain_failure(
+            result.stderr, result.stdout, result.args, result.code
+        )
+        details = failure.details
+        note = "出错前已经写入的配置项会保留在 config.json。"
+        details = f"{details}\n\n{note}" if details else note
+        self._error(failure.title, failure.message, details)
+
+    def _settings_saved(
+        self,
+        binary_dir: str,
+        data_dir: str,
+        backup_dir: str,
+        listen: str,
+        public_url: str,
+        api_origin: str,
+        data_changed: bool,
+        had_identity: bool,
+        old_binary: str,
+        old_data: str,
+        old_default_data: str,
+    ) -> None:
+        self._set_busy(False)
+        try:
             gui_config.save(
                 self.gui_config_path,
-                {
-                    "binary": binary,
-                    "data_dir": data_dir,
-                    "backup_dir": backup_dir,
-                    "username": self.last_username,
-                },
+                gui_config.Config(
+                    connection=self.connection,
+                    binary_dir=binary_dir,
+                    data_dir=data_dir,
+                    username=self.last_username,
+                ),
             )
-            self.binary_dir = binary
-            self.data_dir = data_dir
-            self.backup_dir = backup_dir
-            self.listen = listen
-            self.public_url = public_url
-            self.api_origin = api_origin
         except OSError as exc:
-            self._error("保存设置失败", f"无法写入配置文件：{exc}")
+            self._error("保存设置失败", f"无法写入 config.gui.json：{exc}")
             return
-        self.defaults = server_config.defaults(Path(self.binary_dir))
+
+        self.binary_dir = binary_dir
+        self.data_dir = data_dir
+        self.listen = listen
+        self.public_url = public_url
+        self.api_origin = api_origin
+        resolved_data = (
+            data_dir.strip()
+            or str(server_config.default_data_dir(binary_dir))
+        )
+        self.backup_dir = backup_dir or server_config.default_backup_dir(resolved_data)
+        self.defaults = server_config.defaults(Path(binary_dir))
         self._update_data_summary()
         self._refresh_data_state()
+
         if data_changed and had_identity:
             # 登录态绑定旧数据目录；设置保存成功后再清旧会话，失败就等它过期。
             try:
@@ -1714,11 +2097,7 @@ class MainWindow(QMainWindow):
                     old_path if old_path.is_file() else cli.binary_in(old_path)
                 )
                 if old_exec.is_file():
-                    old_data_path = (
-                        old_data
-                        if old_data.strip()
-                        else old_default_data
-                    )
+                    old_data_path = old_data if old_data.strip() else old_default_data
                     cli.run_command(
                         str(old_exec),
                         [
@@ -1730,6 +2109,7 @@ class MainWindow(QMainWindow):
                     )
             except Exception:  # noqa: BLE001 - 登出失败不阻塞设置保存
                 pass
+
         if data_changed:
             self._reset_identity_state()
         elif self.identity is not None:
@@ -1739,15 +2119,15 @@ class MainWindow(QMainWindow):
             self._update_identity_ui()
             self._update_backup_placeholder()
             self._update_buttons()
-        message = (
-            "设置已保存；服务重启后生效"
-            if self.server is not None and self.server.running
-            else "设置已保存"
-        )
+
+        running = (
+            self.server is not None and self.server.running
+        ) or (self.service_installed and self.service_active)
+        message = "设置已保存；服务重启后生效" if running else "设置已保存"
         if data_changed:
             message += "；数据目录已切换，请重新登录"
         self._toast(message)
-        self._load_version()
+        self._load_info()
 
     # ---- 关闭 ---------------------------------------------------------
 
