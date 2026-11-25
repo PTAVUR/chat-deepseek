@@ -2,7 +2,7 @@
 
 只记录本分支相对 [chat-demo](https://github.com/deepseek-ai/chat-demo) 的变化；上游已有的聊天界面功能不重复。
 
-## 未发布
+## 0.1.2-official0.1.3 - 2026-11-25
 
 ### 命令行
 
