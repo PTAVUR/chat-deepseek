@@ -36,7 +36,7 @@ func (g *groupList) Set(value string) error {
 
 func runUser(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法：chat-deepseek user <add|list|groups|grant|revoke|disable|enable|reset-password|delete>")
+		return usagef("用法：chat-deepseek user <add|list|groups|grant|revoke|disable|enable|reset-password|delete>")
 	}
 	switch args[0] {
 	case "add":
@@ -58,7 +58,7 @@ func runUser(args []string) error {
 	case "delete":
 		return runUserDelete(args[1:])
 	default:
-		return fmt.Errorf("未知 user 子命令 %q", args[0])
+		return usagef("未知 user 子命令 %q", args[0])
 	}
 }
 
@@ -70,14 +70,14 @@ func runUserAdd(args []string) error {
 	var groups groupList
 	fs.Var(&groups, "group", "附加组，可重复（User/Admin/Owner）")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 1 {
-		return errors.New("用法：chat-deepseek user add [--group Admin] <username>")
+		return usagef("用法：chat-deepseek user add [--group Admin] <username>")
 	}
 	username := fs.Arg(0)
 	if err := account.ValidateUsername(username); err != nil {
-		return fmt.Errorf("用户名需为 1-64 个字母、数字或 . _ -: %w", err)
+		return usagef("用户名需为 1-64 个字母、数字或 . _ -: %v", err)
 	}
 	op, err := authorize(*dataDir, account.GroupAdmin)
 	if err != nil {
@@ -110,7 +110,7 @@ func runUserList(args []string) error {
 	fs.SetOutput(os.Stderr)
 	dataDir := fs.String("data-dir", "", "数据目录")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	op, err := authorize(*dataDir, account.GroupAdmin)
 	if err != nil {
@@ -141,10 +141,10 @@ func runUserGroups(args []string) error {
 	fs.SetOutput(os.Stderr)
 	dataDir := fs.String("data-dir", "", "数据目录")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 1 {
-		return errors.New("用法：chat-deepseek user groups <username>")
+		return usagef("用法：chat-deepseek user groups <username>")
 	}
 	op, err := authorize(*dataDir, account.GroupAdmin)
 	if err != nil {
@@ -164,14 +164,14 @@ func runUserGroup(args []string, add bool) error {
 	fs.SetOutput(os.Stderr)
 	dataDir := fs.String("data-dir", "", "数据目录")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 2 {
-		return errors.New("用法：chat-deepseek user grant|revoke <username> <User|Admin|Owner>")
+		return usagef("用法：chat-deepseek user grant|revoke <username> <User|Admin|Owner>")
 	}
 	group, ok := account.ParseGroup(fs.Arg(1))
 	if !ok {
-		return fmt.Errorf("未知组 %q", fs.Arg(1))
+		return usagef("未知组 %q", fs.Arg(1))
 	}
 	op, err := authorize(*dataDir, account.GroupOwner)
 	if err != nil {
@@ -204,10 +204,10 @@ func runUserDisabled(args []string, disabled bool) error {
 	fs.SetOutput(os.Stderr)
 	dataDir := fs.String("data-dir", "", "数据目录")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 1 {
-		return errors.New("用法：chat-deepseek user disable|enable <username>")
+		return usagef("用法：chat-deepseek user disable|enable <username>")
 	}
 	op, err := authorize(*dataDir, account.GroupAdmin)
 	if err != nil {
@@ -244,10 +244,10 @@ func runUserResetPassword(args []string) error {
 	dataDir := fs.String("data-dir", "", "数据目录")
 	passwordStdin := fs.Bool("password-stdin", false, "从标准输入读取密码")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 1 {
-		return errors.New("用法：chat-deepseek user reset-password <username>")
+		return usagef("用法：chat-deepseek user reset-password <username>")
 	}
 	op, err := authorize(*dataDir, account.GroupAdmin)
 	if err != nil {
@@ -286,10 +286,10 @@ func runUserDelete(args []string) error {
 	dataDir := fs.String("data-dir", "", "数据目录")
 	yes := fs.Bool("yes", false, "跳过确认")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 1 {
-		return errors.New("用法：chat-deepseek user delete [--yes] <username>")
+		return usagef("用法：chat-deepseek user delete [--yes] <username>")
 	}
 	op, err := authorize(*dataDir, account.GroupAdmin)
 	if err != nil {

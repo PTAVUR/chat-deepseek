@@ -17,6 +17,10 @@ import (
 )
 
 const (
+	// exitRuntime 是普通运行错误。
+	exitRuntime = 1
+	// exitUsage 表示命令或参数用法错误。
+	exitUsage = 2
 	// exitAuthRequired 表示未登录、登录过期或登录态失效。
 	exitAuthRequired = 3
 	// exitForbidden 表示已登录但权限不足。
@@ -39,13 +43,21 @@ func (e *exitError) Unwrap() error {
 	return e.err
 }
 
-// ExitStatus 返回进程应使用的退出码：3 需要登录，4 权限不足，其余为 1。
+// ExitStatus 返回进程应使用的退出码：2 用法错误，3 需要登录，4 权限不足，其余为 1。
 func ExitStatus(err error) int {
 	var target *exitError
 	if errors.As(err, &target) {
 		return target.code
 	}
-	return 1
+	return exitRuntime
+}
+
+func usageError(err error) error {
+	return &exitError{code: exitUsage, err: err}
+}
+
+func usagef(format string, args ...any) error {
+	return usageError(fmt.Errorf(format, args...))
 }
 
 func authRequired(message string) error {

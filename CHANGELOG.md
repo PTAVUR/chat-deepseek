@@ -2,6 +2,16 @@
 
 只记录本分支相对 [chat-demo](https://github.com/deepseek-ai/chat-demo) 的变化；上游已有的聊天界面功能不重复。
 
+## 未发布
+
+### 命令行
+
+- 新增 `info`：只读输出固定 `key=value`（版本、路径、配置、初始化状态、systemd 状态），不创建数据库、`config.json` 或 WAL。
+- 新增 `config set`：修改 `listen` / `public_url` / `api_origin` / `backup_dir`，保留 `config.json` 里的未知字段并原子写 `0600`；`backup_dir` 支持清空回默认。
+- 新增 `service`：Linux systemd 托管，支持 user/system 两种范围（`install` / `uninstall` / `start` / `stop` / `restart` / `status`）。`install` 只生成 unit 并 `daemon-reload`，不启动；`--enable` 只设置开机自启。Windows/macOS 明确不支持，继续前台 `serve` 或平台 supervisor。
+- `backup` / `backup list` / `backup restore` 统一按 `--backup-dir` > `config.json` 的 `backup_dir` > `data/backups` 解析备份地址。
+- 退出码补齐用法错误 `2`；`info`、`config set`、`service` 不需要应用登录。
+
 ## 0.1.3-official0.1.4 - 2026-11-25
 
 ### 上游同步

@@ -51,6 +51,54 @@ func Open(dataDir string) (*sql.DB, error) {
 	return db, nil
 }
 
+// Initialized 只读检查数据目录里是否存在活动 Owner。
+// 数据库不存在时返回 false，且不会创建数据库、WAL 或执行迁移。
+func Initialized(dataDir string) (bool, error) {
+	dir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return false, fmt.Errorf("resolve data directory: %w", err)
+	}
+	path := filepath.Join(dir, "chat.db")
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("检查数据库文件: %w", err)
+	}
+	db, err := sql.Open("sqlite", readOnlyDSN(path))
+	if err != nil {
+		return false, fmt.Errorf("open database: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var count int
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*)
+		FROM user_groups ug
+		JOIN users u ON u.id = ug.user_id
+		WHERE ug.group_name = 'Owner' AND u.disabled = 0`).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("读取数据库: %w", err)
+	}
+	return count > 0, nil
+}
+
+// readOnlyDSN 生成只读 DSN。没有 chat.db-wal 时用 immutable=1：
+// SQLite 读 WAL 模式的库会创建 -shm/-wal，而 backup 命令看到它们就会
+// 拒绝执行；immutable 告诉 SQLite 文件不会被并发修改，从而完全不写盘。
+// 服务运行时 -wal 存在，此时只能普通只读打开（backup 本来也会拒绝）。
+func readOnlyDSN(path string) string {
+	u := &url.URL{Scheme: "file", Path: uriPath(path)}
+	query := u.Query()
+	query.Set("mode", "ro")
+	if _, err := os.Stat(path + "-wal"); errors.Is(err, os.ErrNotExist) {
+		query.Set("immutable", "1")
+	}
+	query.Add("_pragma", "busy_timeout(5000)")
+	u.RawQuery = query.Encode()
+	return u.String()
+}
+
 func dsn(path string) string {
 	u := &url.URL{Scheme: "file", Path: uriPath(path)}
 	query := u.Query()

@@ -26,10 +26,10 @@ func runLogin(args []string) error {
 	username := fs.String("username", "", "账户名")
 	passwordStdin := fs.Bool("password-stdin", false, "从标准输入读取密码")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 0 {
-		return errors.New("login 不接受位置参数")
+		return usagef("login 不接受位置参数")
 	}
 
 	dir, db, err := openExistingStore(*dataDir)
@@ -126,10 +126,10 @@ func runLogout(args []string) error {
 	fs.SetOutput(os.Stderr)
 	dataDir := fs.String("data-dir", "", "数据目录")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 0 {
-		return errors.New("logout 不接受位置参数")
+		return usagef("logout 不接受位置参数")
 	}
 	file, host, ok := findSession()
 	if !ok {
@@ -172,10 +172,10 @@ func runWhoami(args []string) error {
 	fs.SetOutput(os.Stderr)
 	dataDir := fs.String("data-dir", "", "数据目录")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 0 {
-		return errors.New("whoami 不接受位置参数")
+		return usagef("whoami 不接受位置参数")
 	}
 	file, host, ok := findSession()
 	if !ok {

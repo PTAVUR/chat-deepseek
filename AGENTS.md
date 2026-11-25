@@ -14,7 +14,7 @@
 - 运行环境：Node.js 22.12+、pnpm、Go 1.27+。前端开发端口 `8090`，Go 服务开发端口 `8091`。
 - 部署形态：便携式二进制（`go:embed` 内嵌 Web UI）+ 同级 `data/` 目录，由普通用户运行；不要求 root、不写 `/var`、不依赖 systemd。只能通过 HTTP 访问，`file://` 静态形态已不再支持。
 
-## 2. 当前状态（2026-11-25 核验）
+## 2. 当前状态（2026-11-26 核验）
 
 - 改造状态：v1 主链路可用。Go 服务端具备账户/组、登录/CSRF、设置与 API Key 加密、会话版本锁/永久删除、附件存储、DeepSeek Files/SSE/ASR/TTS 代理和 Web UI 嵌入；前端已登录门、设置、会话、附件全部走 `/api/v1`，localStorage/IndexedDB 已移除。
 - Git：当前在 `feature/dev`；`main` 跟踪 `upstream/main`，`feature/dev` 跟踪 `origin/feature/dev`；`AGENTS.md` 提交在 feature 分支。已合并上游 `v0.1.4`（合并提交 `7e88ec5`）。
@@ -22,7 +22,8 @@
 - `pnpm lint`：通过，`0 warnings and 0 errors`（约 132 个文件）。
 - `pnpm build`：通过，生成 `dist/` 并复制到 `internal/webui/dist/` 供 `go:embed`。
 - CLI 管理登录：`login` / `logout` / `whoami` 按 shell 隔离、固定 15 分钟；`user ...` / `backup ...` 按 Owner/Admin 校验，退出码 `3` 未登录、`4` 权限不足。GUI 已适配：未登录时账户区显示锁图标、备份区提示登录后查看，点登录/刷新/添加/备份会弹登录框；按钮按 Admin/Owner 权限置灰，关闭 GUI 自动 logout。
-- 测试：Go 单元/接口测试覆盖 auth、account、database、config、secret、settings、chat、filestore、backup、deepseek、server、cli；`go test ./...` 通过。前端没有自动化测试。
+- CLI 契约：新增 `info` / `config set` / `service`（仅 Linux systemd，默认 user unit，`--system` 需 root）；`backup_dir` 进入 `config.json`，`backup` / `list` / `restore` 按 `--backup-dir` > config > `data/backups` 解析；`info` 与 `service status` 输出固定 `key=value`，退出码补齐用法错误 `2`。
+- 测试：Go 单元/接口测试覆盖 auth、account、database、config、secret、settings、chat、filestore、backup、deepseek、server、service、cli；新增 `info` / `config set` / `service` 契约测试和 fake systemd 测试；`go test ./...`、`go vet ./...`、Windows/macOS 交叉编译通过。前端没有自动化测试。
 - 手动端到端：已用临时数据目录 + dev 代理走通登录、退出、设置/API Key、会话创建/加载/刷新持久化、附件上传和 SSE mock 回复；侧边栏 Logo、头像菜单、Deepseek 标题与 favicon 已在无头 Chrome 验证（桌面与移动端），登录页明暗两套样式、DM Sans 字标和首页鲸鱼也已核对；系统设置已按官方左右分栏与行式列表重做，账户资料保存后就地更新且不关闭弹窗；桌面与移动端均已在无头 Chrome 核对；删除会话、清空全部会话和移除草稿附件后，`files` 表、磁盘原件和空用户目录均已核对清理；历史导出后重新导入会重映射附件 ID 并原子替换会话，导入进度按已处理会话数显示；`backup` 在服务运行时拒绝、停止后生成 ZIP。上游 v0.1.4 的导入进度、带图片归档的 MIME 回填与损坏 ZIP 失败保护已在无头 Chrome 核对（11 个会话 + 1 张 PNG；失败时旧会话和图片保持不变）。
 - 代码规模：`src` 约 21k 行（含 CSS Modules）；最大文件是 `src/services/chat/store.ts`（约 1.1k 行）。
 - GUI：`gui/app.py` 是 PySide6（Qt 6）管理界面，`parsing.py` 解析 `user list` / `whoami` / `backup list` / `serve` / `version` 输出，`dialogs.py` 提供 Qt 登录、输入、确认和路径选择，`widgets.py` 自绘卡片、按钮、输入框、状态点、组标签与成员行；`fonts.py` 优先系统 UI 字体，`assets/whale.svg` 是 CC0 的鲸鱼标志，`whale.ico` / `whale.icns` 用于 Windows EXE 和 macOS `.app` 图标。窗口标题栏、边框和圆角全部交给系统（Windows x/□/-，GNOME 关闭按钮，macOS 交通灯），不再自绘窗口外壳。账户列表是两行成员行（头像、用户名、组标签、状态点），悬停/选中为长胶囊，选中头像变实心蓝，底部信息栏显示“已选择 / 取消选择”和操作；“备份记录…”列出备份并可恢复；未登录时账户区显示锁图标、备份区提示“登录后查看备份记录”，点登录/刷新/添加/备份先弹登录框，关闭 GUI 自动 `logout`。解析器把服务运行中、端口占用、最后一个 Owner、账户不存在、密码不合规等已知失败翻译成可操作提示，只有无法识别时才显示“未知错误”和原始输出；GUI 单元测试共 74 个通过，成员列表、服务启停、备份和账户增删改已在临时数据目录核对。
@@ -97,10 +98,11 @@ internal/
   chat/                       会话 JSON、版本锁、永久删除
   filestore/                  附件原件与元数据
   backup/                     数据目录 ZIP 备份、列表与恢复
+  service/                    Linux systemd unit 生成与 systemctl/loginctl 调用
   deepseek/                   Files / Messages / ASR / TTS 上游客户端
   server/                     /api/v1 认证、设置、会话、文件、SSE/语音代理与静态 UI
   webui/                      go:embed 的 Web 构建产物（dist/.gitkeep 占位）
-  cli/                        setup/serve/backup/user、login/logout/whoami、会话与权限守卫
+  cli/                        setup/serve/backup/user、login/logout/whoami、info/config/service、会话与权限守卫
 ```
 
 `README.md` 是唯一面向用户的功能、运行与数据说明（中文）；英文版已删除，不要恢复双语结构。`src/services/chat/history/README.md` 是历史导入导出的详细设计文档。改功能时同步更新对应文档。
@@ -147,6 +149,14 @@ Go 代码遵循 `gofmt`；服务端包不写全局状态，CLI 负责装配依�
 - 语音：`POST /speech/asr` 转发 multipart，`POST /speech/tts` 转发 JSON 并返回裸 PCM（24 kHz、单声道、16-bit 小端）。
 - 上游协议仍是 Anthropic 兼容 Messages：请求体含 `model`、`system`、`messages`、`thinking`、`tools`、`safety_check: { level: 'high' }`，无标题时加 `title`；模型固定 `deepseek-flash`。SSE 解析与事件合并仍在前端 `api/sse.ts`、`api/parseEvent.ts`、`chat/reply.ts`。
 - 错误统一为 `ApiError`（`http | stream | network | interrupted | protocol`），`api/errors.ts` 负责分类；**分类不直接生成文案**，各场景自己选 i18n key。会话过期 401 会触发整页回登录；DeepSeek 透传的 401 不触发。
+
+### CLI 契约
+
+- 文本输出就是内部契约，不加 `--json`：`user list` 表头、`whoami` 的 `username\tgroups\texpires`、`backup list` 的 `NAME\tSIZE\tTIME`、`backup` 的 `备份已写入 <path>`、`serve` 的启动前缀、`version` 格式都冻结。
+- `info` 输出固定顺序的 `key=value`（version/os/arch/binary/data_dir/initialized/listen/public_url/api_origin/backup_dir/service_*）；`service status` 输出其中的 `service_*` 七项。`info` 只读，不创建数据库、`config.json` 或 WAL。
+- 退出码：`0` 成功、`1` 运行错误、`2` 用法错误、`3` 未登录/过期、`4` 权限不足。
+- `info` / `config set` / `service` 不需要应用登录；`service` 仅 Linux systemd，默认 user unit，`--system` 需要 root、`--run-as` 和显式 `--data-dir`。
+- 文本格式变更必须同步 `gui/parsing.py`、GUI 测试和 README。
 
 ## 6. 核心流程
 
@@ -272,6 +282,9 @@ pnpm dev
 9. GUI：用临时数据目录启动，确认未登录时账户区锁图标、备份行提示登录后查看，登录/刷新/添加/备份按钮弹出登录框；Owner 登录后刷新、添加、备份、授组可用；Admin 登录后授组/备份/操作 Owner 置灰，只能管理 User；不能禁用/删除自己；关闭 GUI 后会话文件消失；改数据目录、恢复备份后重新登录；保存设置后重启 GUI，确认路径在 `config.gui.json`、监听/Public URL/API 地址在 `data/config.json`，且 `serve` 读取到新值；确认密码不出现在命令行与输出。
 10. `gui/.venv/bin/python -m unittest discover -s gui/tests` 通过。
 11. CLI 登录：`setup` 后未登录执行 `user list` 应退出 3；`login` 后 `whoami` / `user list` 正常；同一机器两个终端分别登录不同账户互不影响；`logout` 只退当前终端；过期后退出 3；`Admin` 授组、操作 `Owner`、`backup` 创建/列表/恢复应退出 4。GUI 使用同一套 CLI 登录态，流程见第 9 项。
+12. `info`：空目录输出 `initialized=false` 且不创建 `chat.db`/`config.json`/WAL；setup 后 `initialized=true`；配置值、`backup_dir` 默认值和 `--system` 的 `service_*` 字段正确。
+13. `config set`：四个 key 正常写入并提示生效时机；未知字段保留；`0600`；非法值退出 2；`backup_dir` 清空回默认；损坏的 `config.json` 不被覆盖。
+14. `service`：用临时 `XDG_CONFIG_HOME` 和 fake `systemctl`/`loginctl`（临时 PATH）验证 user/system unit 内容、未初始化拒绝安装、install 不启动、`--enable` 只 enable、`--force` 覆盖、linger 提示、status 解析和不支持平台行为；不要在本机真的写 `~/.config/systemd/user` 或 `/etc/systemd/system`。
 
 GitHub Actions 发布流水线在 `.github/workflows/release-{linux,windows,macos}.yml`，只接受 Actions → Release Linux/Windows/macOS → Run workflow 手动触发；push、tag、PR、schedule 都不会自动运行。每个 workflow 在自己的 runner 上完整执行 Web 构建、Go CLI 编译和 ZIP 生成；Windows/macOS 还执行 PyInstaller GUI 打包。Linux 包根目录是 `chat-deepseek`、`gui/`（GUI 源码副本）、`src/`（完整源码，内含前端 `src/src/`）和三份文档；Windows 包额外包含预编译 GUI 和同样的 `src/`。macOS ZIP 只含一个 DMG，DMG 内只有 `chat-deepseek-gui.app` 和 `/Applications` 链接；CLI、预配置 `config.gui.json` 和三份文档都在 `.app/Contents/Resources`，不附带源码。`src/` 由 `git archive HEAD` 生成，不包含 `data/`、`node_modules/`、`gui/.venv` 或构建产物。Linux runner 用 `ubuntu-latest`，只构建 CLI；Windows 用 `windows-latest`，构建 CLI 和 GUI；macOS 用 `macos-latest`（arm64），构建 `.app`、DMG 和只含 DMG 的 ZIP。Windows GUI 是带 `.ico` 图标的 `.exe`；macOS GUI 是带 `.icns` 图标的 `chat-deepseek-gui.app`。macOS 数据目录默认在 `~/Library/Application Support/chat-deepseek/data`，DMG 中的 `config.gui.json` 作为首次启动模板。在 tag 上运行会把 ZIP 上传到同一个 GitHub Release，在分支上运行只保留 Actions artifacts；三个 workflow 可并行，发布步骤对 Release 创建/上传做重试。上游遗留的 GitHub Pages workflow 已删除。前端新增测试框架前先与用户确认。
 
@@ -337,6 +350,9 @@ GitHub Actions 发布流水线在 `.github/workflows/release-{linux,windows,maco
 - **上游连通性**：检查 GitHub upstream 时 `git ls-remote` 曾超时；本地 `upstream/main` 跟踪关系正常，同步失败先排查网络或代理。2026-11-25 经 `127.0.0.1:7897` 代理同步 `v0.1.4` 成功。
 - **上游 v0.1.4 同步**：2026-11-25 把 `main` 同步到 `cdf9617`（v0.1.4）并推送 `origin/main` 与 tag；在 `feature/dev` 合并为 `7e88ec5`。冲突集中在 `package.json`、`SettingsDialog.tsx`、`Settings.module.css`（含手写 `.d.ts`）和 `chat/db.ts`：保留服务端适配层与设置页布局，移植导入进度、附件随会话导入、ZIP 读取优化与旧浏览器兼容；`db.ts` 的内存暂存补上批量 `addStagingSessions` 和带 `sessionIds` 的 MIME 回填。
 - **package version**：`0.1.3-official0.1.4` 是合法的 semver 预发布版本（prerelease），npm 已验证可解析，pnpm 构建也能读取；本项目不发布 npm，所以可以采用。注意它排序在 `0.1.3` 之前，不要把它当作正式版 `0.1.3` 的替代。
+- **Docker 定位**：2026-11-26 评估后决定暂不把 Docker 作为一等发布形态。项目是 `CGO_ENABLED=0` 静态二进制 + 内嵌 Web UI + 纯 Go SQLite，运行时依赖几乎为零，Docker 的依赖隔离和部署简化收益有限；容器化反而要求把 CLI 管理面塞进 `docker exec`（父进程链登录态、停容器后备份、首次交互式 `setup`），与“CLI/OS 是管理边界”的设计冲突。GUI 暂不做 Docker 集成，GHCR 镜像和 amd64/arm64 构建暂缓。NAS/远程服务器方向是 SSH + 二进制 + 主机 supervisor（systemd、tmux 或 NAS 计划任务）；若以后确有 NAS 需求，可另做薄镜像 + compose 示例，明确需要 CLI 初始化，不影响 GUI 与管理模型。
+- **服务托管（systemd）**：2026-11-26 增加 `service`，只支持 Linux systemd。默认用户级 unit（`~/.config/systemd/user/chat-deepseek.service`，`WantedBy=default.target`），`--system` 写 `/etc/systemd/system/chat-deepseek.service`（`User=`/`Group=`、`WantedBy=multi-user.target`），需要 root、`--run-as` 和显式 `--data-dir`，禁止以 root 运行。`install` 只写 unit + `daemon-reload`，不启动；“开机自启”和“立即启动”分开（`--enable` 只 enable）。没开 linger 时注销会停止用户服务，CLI 只打印 `loginctl enable-linger` 提示，不执行 sudo。Windows/macOS 和没有 systemd 的 Linux 不提供后端，继续前台 `serve` 或平台 supervisor（任务计划程序/NSSM、LaunchAgent、tmux/nohup）。不做 daemon/PID、日志命令、静态 unit 文件。
+- **backup_dir 归属**：2026-11-26 把 `backup_dir` 放进 `config.json`，因为 `backup`/`backup list`/`backup restore` 是 CLI 能力，不能只由 GUI 配置。解析优先级 `--backup-dir` > `config.json` > `<data_dir>/backups`；`config set` 用原始 JSON map 更新并保留未知字段。`config.json` 会进备份 ZIP，restore 会把它一起恢复，换机器后需要重新设置。GUI 本轮未改，仍把备份地址存 `config.gui.json` 并以 `--backup-dir` 覆盖；GUI v2 再改为读 `info` / 调 `config set`。
 - **浏览器存储**：v1 已移除 localStorage/IndexedDB，旧浏览器数据不会自动迁移到服务端；需要保留历史时先在旧版本导出 ZIP，再在新版导入。
 - **README 语言**：只保留中文 `README.md`，英文版已删除；README 保持用户文档定位，试错与决策记录放这里。
 - **UI 文案与视觉**：标题、`appName` 为 `Deepseek`；字标使用 DM Sans 700（OFL，官方界面字体；官方字标本身是定制字形，不能公开使用）。侧边栏和登录页使用 Simple Icons 的 DeepSeek 鲸鱼标志（CC0-1.0）；设置入口是头像 + 用户名菜单，右侧是 `...`；登录页跟随明暗主题（亮色白底 / 暗色官方风格），首页问候语左侧有鲸鱼；系统设置采用官方左右分栏与行式列表，账户资料保存后就地更新，弹窗不关闭、不整页刷新。第三方来源与商标说明见 `THIRD_PARTY_NOTICES.md`。
@@ -355,7 +371,7 @@ GitHub Actions 发布流水线在 `.github/workflows/release-{linux,windows,maco
 ### 目标
 
 - 自托管（Jellyfin 式）：服务端保存账户、会话、附件、设置和 API Key；浏览器只做客户端。
-- 便携：二进制与 `data/` 同级；普通用户运行，不要求 root、不写 `/var`、不依赖 systemd。
+- 便携：二进制与 `data/` 同级；普通用户运行，不要求 root、不写 `/var`；systemd 只是 Linux 上可选的常驻方式，不依赖它也能前台运行。
 - 账户/组管理全部走 CLI；Web 登录后可改自己的用户名、密码和头像，并在数据管理中设置自己的 API Key。
 - 保留现有 React 聊天逻辑（`store.ts`、`reply.ts`、`branches.ts`、`view.ts` 和组件），服务端暂做存储 + DeepSeek SSE 代理，减少与上游同步的冲突。
 - v1 只做 Web；不做 PWA、Android 原生；Docker 交付暂缓。
@@ -366,7 +382,7 @@ GitHub Actions 发布流水线在 `.github/workflows/release-{linux,windows,maco
 chat-deepseek/
   chat-deepseek          # 二进制
   data/
-    config.json          # 监听地址等非敏感配置
+    config.json          # 监听地址、Public URL、API 地址、备份地址
     chat.db              # SQLite
     master.key           # API Key 加密主密钥（0600）
     files/<user_id>/     # 附件原件
@@ -375,7 +391,7 @@ chat-deepseek/
 
 - 默认数据目录是二进制所在目录下的 `data/`；`--data-dir` 仅用于测试或特殊安装。
 - 监听高位端口（默认 `8090`），不申请特权；前台运行，SIGINT/SIGTERM 优雅关闭。
-- 不内置 systemd/服务安装；用户可自行用 tmux、nohup 或自己的 supervisor 托管。
+- CLI 可选生成 systemd unit（仅 Linux，见 `service`）；其他平台和场景用 tmux、nohup、任务计划程序、LaunchAgent 或自己的 supervisor 托管。
 - 数据目录 0700、数据库和密钥 0600；不把敏感数据写到用户主目录之外。
 
 ### 账户与组
@@ -439,11 +455,12 @@ chat-deepseek/
 - Argon2id、登录会话、CSRF、登录限流、`auth/login|logout|me|password|username|avatar`。
 - CLI `setup`、`serve`、`backup`、`user add/list/groups/grant/revoke/disable/enable/reset-password/delete`。
 - CLI `login` / `logout` / `whoami`：按 shell 隔离、固定 15 分钟；`user ...` 与 `backup ...` 按组校验，退出码 3/4；浏览器与 CLI 会话按 scope 隔离。
+- CLI `info` / `config set` / `service`：`info` 只读输出固定 `key=value`；`config set` 保留未知字段并原子写 0600；`service` 生成 systemd user/system unit（install/uninstall/start/stop/restart/status），备份命令统一从 `config.json` 读取 `backup_dir`；退出码补齐用法错误 2。
 - GUI 登录态：未登录锁定账户/备份区，按 Admin/Owner 置灰操作，关闭自动 logout；记住上次用户名；修复暗色系统首次启动被判成亮色。
 - `master.key` 与 AES-256-GCM；每用户偏好/API Key API，Key 不出服务端、不写日志。
 - 会话 CRUD、`version` 乐观锁、永久删除，按用户隔离；历史导入经 `POST /import` 原子替换。
 - 附件上传/下载/永久删除/批量清理，按用户目录保存；chat 请求里的本地 `file_id` 会惰性上传到 DeepSeek 并缓存远端 ID。
-- `backup` CLI 把数据目录打包成 ZIP，支持 `--backup-dir`（默认 `data/backups`）、`backup list` 和 `backup restore`；检测到 `chat.db-wal`/`chat.db-shm` 时拒绝，避免运行中备份或恢复。
+- `backup` CLI 把数据目录打包成 ZIP，支持 `--backup-dir`（默认读 `config.json` 的 `backup_dir`，否则 `data/backups`）、`backup list` 和 `backup restore`；检测到 `chat.db-wal`/`chat.db-shm` 时拒绝，避免运行中备份或恢复。
 - GitHub Actions 三平台手动发布流水线（Linux / Windows / macOS 各自独立 workflow，tag 运行时上传 GitHub Release）。
 - DeepSeek SSE 代理、ASR/TTS 代理、API Key 校验；上游错误状态原样透传。
 - 前端认证门/登录页、服务端设置与 API Key、会话/附件适配，localStorage/IndexedDB 已移除。

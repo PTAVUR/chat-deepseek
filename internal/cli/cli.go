@@ -37,6 +37,12 @@ func Run(args []string) error {
 		return runSetup(args[1:])
 	case "serve":
 		return runServe(args[1:])
+	case "info":
+		return runInfo(args[1:])
+	case "config":
+		return runConfig(args[1:])
+	case "service":
+		return runService(args[1:])
 	case "user":
 		return runUser(args[1:])
 	case "login":
@@ -54,7 +60,7 @@ func Run(args []string) error {
 		printUsage()
 		return nil
 	default:
-		return fmt.Errorf("未知命令 %q；运行 chat-deepseek help 查看用法", args[0])
+		return usagef("未知命令 %q；运行 chat-deepseek help 查看用法", args[0])
 	}
 }
 
@@ -64,11 +70,14 @@ func printUsage() {
 用法：
   chat-deepseek                 首次运行 setup，之后启动服务并打开浏览器
   chat-deepseek setup           创建第一个 Owner
+  chat-deepseek info            输出路径、配置和服务状态（固定 key=value）
+  chat-deepseek config set ...  修改 config.json（listen/public_url/api_origin/backup_dir）
+  chat-deepseek serve           前台启动 HTTP 服务（会话模式）
+  chat-deepseek service ...     用 systemd 托管服务（仅 Linux；Windows/macOS 不支持）
   chat-deepseek login           登录 CLI，15 分钟后自动过期
   chat-deepseek logout          退出当前终端的登录
   chat-deepseek whoami          查看当前终端的登录身份
-  chat-deepseek serve           启动 HTTP 服务
-  chat-deepseek backup          停止服务后把 data/ 打包成 ZIP（默认写到 data/backups/）
+  chat-deepseek backup          停止服务后把 data/ 打包成 ZIP（默认写到 config.json 的 backup_dir 或 data/backups/）
   chat-deepseek backup list     列出备份地址里的 ZIP
   chat-deepseek backup restore  恢复备份，覆盖 config.json、chat.db、master.key、files/
   chat-deepseek user ...        管理账户/组（仅服务端 CLI）
@@ -80,16 +89,24 @@ func printUsage() {
   --public-url <url>            对外访问地址（HTTPS 反代时用于 Secure Cookie）
   --api-origin <url>            DeepSeek API 地址，默认 https://api.deepseek.com
   --no-browser                  不自动打开浏览器（serve）
-  --backup-dir <dir>            备份地址，默认是 data/backups（backup）
+  --backup-dir <dir>            备份地址，默认是 config.json 的 backup_dir 或 data/backups（backup）
   --output <file>               备份输出文件路径（backup，覆盖默认文件名）
   --yes                         跳过确认（backup restore）
   --username <name>             登录账户名（login）
   --password-stdin              从标准输入读取密码（setup/login/user add/user reset-password）
+  --system                      操作系统级 systemd 服务（service/info）
+  --enable                      设置开机自启，不启动（service install）
+  --force                       覆盖已有 unit（service install）
+  --run-as <user>               系统级服务的运行用户（service install --system）
 
 首次使用：
   ./chat-deepseek setup --username owner
   ./chat-deepseek login --username owner
   ./chat-deepseek serve
+
+常驻运行（Linux）：
+  ./chat-deepseek service install --enable
+  ./chat-deepseek service start
 `)
 }
 
@@ -114,10 +131,10 @@ func runSetup(args []string) error {
 	username := fs.String("username", "", "Owner 用户名")
 	passwordStdin := fs.Bool("password-stdin", false, "从标准输入读取密码")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("setup 不接受位置参数")
+		return usagef("setup 不接受位置参数")
 	}
 
 	dir, err := config.ResolveDataDir(*dataDir)
@@ -194,10 +211,10 @@ func runServe(args []string) error {
 	apiOrigin := fs.String("api-origin", "", "DeepSeek API 地址")
 	noBrowser := fs.Bool("no-browser", false, "不自动打开浏览器")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("serve 不接受位置参数")
+		return usagef("serve 不接受位置参数")
 	}
 
 	dir, err := config.ResolveDataDir(*dataDir)

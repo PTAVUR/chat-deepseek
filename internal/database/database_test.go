@@ -279,3 +279,102 @@ func TestMigrateFromV1(t *testing.T) {
 		t.Fatal("deleted_at columns still present after migration")
 	}
 }
+
+func TestInitializedMissingDatabase(t *testing.T) {
+	dir := t.TempDir()
+	initialized, err := Initialized(dir)
+	if err != nil {
+		t.Fatalf("Initialized: %v", err)
+	}
+	if initialized {
+		t.Fatal("empty directory reported as initialized")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("Initialized created files: %v", entries)
+	}
+}
+
+func TestInitializedRequiresActiveOwner(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	closeDB := func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("close database: %v", err)
+		}
+	}
+	if initialized, err := Initialized(dir); err != nil || initialized {
+		t.Fatalf("before owner: initialized=%v err=%v", initialized, err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO users (id, username, password_hash, created_at, updated_at)
+		 VALUES ('u1', 'owner', 'hash', 0, 0)`,
+	); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO user_groups (user_id, group_name) VALUES ('u1', 'Owner')`,
+	); err != nil {
+		t.Fatalf("insert owner group: %v", err)
+	}
+	closeDB()
+	initialized, err := Initialized(dir)
+	if err != nil {
+		t.Fatalf("Initialized: %v", err)
+	}
+	if !initialized {
+		t.Fatal("active owner not detected")
+	}
+	// 只读检查不能留下 WAL/SHM，否则 backup 会误判服务仍在运行。
+	for _, name := range []string{"chat.db-wal", "chat.db-shm"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("Initialized created %s", name)
+		}
+	}
+
+	db, err = Open(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE users SET disabled = 1 WHERE id = 'u1'`); err != nil {
+		t.Fatalf("disable owner: %v", err)
+	}
+	closeDB()
+	initialized, err = Initialized(dir)
+	if err != nil {
+		t.Fatalf("Initialized disabled: %v", err)
+	}
+	if initialized {
+		t.Fatal("disabled owner counted as active")
+	}
+}
+
+func TestInitializedOnRunningDatabase(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(
+		`INSERT INTO users (id, username, password_hash, created_at, updated_at)
+		 VALUES ('u1', 'owner', 'hash', 0, 0);
+		 INSERT INTO user_groups (user_id, group_name) VALUES ('u1', 'Owner')`,
+	); err != nil {
+		t.Fatalf("seed owner: %v", err)
+	}
+	// 服务仍在运行时 -wal 存在，此时允许普通只读连接读取已提交数据。
+	initialized, err := Initialized(dir)
+	if err != nil {
+		t.Fatalf("Initialized while open: %v", err)
+	}
+	if !initialized {
+		t.Fatal("owner not visible while database is open")
+	}
+}

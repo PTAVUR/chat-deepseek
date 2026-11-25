@@ -31,18 +31,37 @@ CGO_ENABLED=0 go build -o chat-deepseek ./cmd/chat-deepseek
 --public-url <url>     对外访问地址（HTTPS 反代时用于 Secure Cookie）
 --api-origin <url>     DeepSeek API 地址，默认 https://api.deepseek.com
 --no-browser           启动时不自动打开浏览器
---backup-dir <dir>     备份地址，默认是 data/backups（backup）
+--backup-dir <dir>     备份地址，默认读 config.json 的 backup_dir 或 data/backups（backup）
 --output <file>        备份输出文件路径（backup，覆盖默认文件名）
 --yes                  跳过恢复确认（backup restore）
 --username <name>      登录账户名（login）
 --password-stdin       从标准输入读取密码（setup / login / user add / user reset-password）
 ```
 
-服务面向自托管使用，默认只监听本机。需要局域网或公网访问时，改成 `--listen 0.0.0.0:8090`，并建议放在 HTTPS 反向代理后面。当前发布不提供 Docker 镜像、systemd 单元或 Web 管理页；进程由用户自己的 supervisor、tmux 或 nohup 托管。
+服务面向自托管使用，默认只监听本机。需要局域网或公网访问时，改成 `--listen 0.0.0.0:8090`（或 `config set listen`），并建议放在 HTTPS 反向代理后面。当前发布不提供 Docker 镜像或 Web 管理页；Linux 可以用 `service` 命令交给 systemd，其他情况用用户自己的 supervisor、tmux 或 nohup 托管。
+
+## 命令行
+
+| 命令 | 作用 |
+| --- | --- |
+| `setup` | 创建第一个 `Owner`，只能执行一次 |
+| `serve` | 前台启动服务（会话模式），`Ctrl+C` 停止 |
+| `info` | 输出版本、路径、配置和 systemd 状态（固定 `key=value`） |
+| `config set` | 修改 `config.json`：`listen`、`public_url`、`api_origin`、`backup_dir` |
+| `service ...` | Linux systemd 托管：`install` / `uninstall` / `start` / `stop` / `restart` / `status` |
+| `login` / `logout` / `whoami` | CLI 管理登录，按终端隔离，固定 15 分钟过期 |
+| `user ...` | 创建、禁用、授组、重置密码、删除账户 |
+| `backup ...` | 备份、列出备份、恢复备份 |
+| `version` | 版本信息 |
+
+- `info`、`config set`、`service` 不需要应用登录；`service install` 仍要求数据目录已初始化。`info` 只读，不会创建数据库、`config.json` 或 WAL 文件。
+- `config set` 只修改指定字段，保留 `config.json` 里的其他字段，文件仍然是 `0600`。修改 `listen`、`public_url`、`api_origin` 后需要重启 `serve`，`backup_dir` 在下次备份时生效。
+- 退出码：`0` 成功、`1` 运行错误、`2` 用法错误、`3` 未登录或登录过期、`4` 权限不足。
+- `user list`、`whoami`、`backup list`、`info`、`service status` 的文本列是稳定契约；GUI 和脚本依赖这些格式，改动需要同步 `gui/parsing.py`。
 
 ## 图形界面（可选）
 
-`gui/app.py` 是 Python + PySide6（Qt 6）管理界面：按钮只负责拼出 `chat-deepseek` 子命令，输出由 `gui/parsing.py` 解析成账户列表、服务状态和提示；已知失败会翻译成可操作说明，识别不了才显示原始输出。账户、会话、备份逻辑仍全部在 `chat-deepseek` 里，不另写一套。它覆盖 `setup`、`serve`、`backup`、`user ...`、`login` / `logout` / `whoami`、`version` 和 `help`；聊天仍由 `serve` 提供的现有 Web UI 完成。
+`gui/app.py` 是 Python + PySide6（Qt 6）管理界面：按钮只负责拼出 `chat-deepseek` 子命令，输出由 `gui/parsing.py` 解析成账户列表、服务状态和提示；已知失败会翻译成可操作说明，识别不了才显示原始输出。账户、会话、备份逻辑仍全部在 `chat-deepseek` 里，不另写一套。它覆盖 `setup`、`serve`、`backup`、`user ...`、`login` / `logout` / `whoami`、`version` 和 `help`；`info`、`config set`、`service` 目前只在 CLI 提供。聊天仍由 `serve` 提供的现有 Web UI 完成。
 
 依赖装在 `gui/.venv`（已 gitignore）。在仓库根目录：
 
@@ -54,7 +73,7 @@ gui/.venv/bin/python gui/app.py
 
 Windows 用 `gui\.venv\Scripts\python gui\app.py`；更完整的命令见 [gui/README.md](gui/README.md)。需要 Python 3.10+ 和 `requirements.txt` 里的 PySide6。Linux 还缺 Qt 的 xcb 运行库时，Debian/Ubuntu 可安装 `libxcb-cursor0`、`libxkbcommon-x11-0`、`libgl1`、`libegl1` 等系统包。
 
-`gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。设置页的二进制目录、数据目录、备份地址保存在平台用户配置目录的 `config.gui.json`：Linux 是 `~/.config/chat-deepseek/`，macOS 是 `~/Library/Application Support/chat-deepseek/`，Windows 是 `%APPDATA%\chat-deepseek\`。监听地址、Public URL 和 API 地址写入数据目录的 `config.json`，`serve` 启动时直接读取。左下角的“恢复默认”在 Windows/Linux 回到二进制同级 `data/`、`data/backups/`，在 macOS 回到 `~/Library/Application Support/chat-deepseek/data/`；监听地址和 API 地址回到 `127.0.0.1:8090` 和官方地址。数据卡片可以立即备份、查看备份记录并从记录中恢复；恢复前必须先停止服务。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里；上次登录的用户名记在 `config.gui.json`，不保存密码。
+`gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。设置页的二进制目录、数据目录、备份地址保存在平台用户配置目录的 `config.gui.json`：Linux 是 `~/.config/chat-deepseek/`，macOS 是 `~/Library/Application Support/chat-deepseek/`，Windows 是 `%APPDATA%\chat-deepseek\`。监听地址、Public URL 和 API 地址写入数据目录的 `config.json`，`serve` 启动时直接读取；GUI 的备份地址会作为 `--backup-dir` 传给 CLI，覆盖 `config.json` 里的 `backup_dir`。左下角的“恢复默认”在 Windows/Linux 回到二进制同级 `data/`、`data/backups/`，在 macOS 回到 `~/Library/Application Support/chat-deepseek/data/`；监听地址和 API 地址回到 `127.0.0.1:8090` 和官方地址。数据卡片可以立即备份、查看备份记录并从记录中恢复；恢复前必须先停止服务。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里；上次登录的用户名记在 `config.gui.json`，不保存密码。
 
 关闭窗口会停止由它启动的服务，并退出当前 GUI 的 CLI 登录；外部启动的 `chat-deepseek serve` 不会被它接管。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止服务是强制结束进程；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
 
@@ -114,7 +133,7 @@ Linux 不附带预编译 GUI。PyInstaller onefile 会绑定构建机的 glibc�
 
 - 只有 `Admin` / `Owner` 能登录；普通 `User` 没有 CLI 管理权限。
 - `logout` 只退出当前终端，其他终端不受影响。
-- 未登录或登录过期时退出码为 `3`，权限不足为 `4`，便于脚本和 GUI 判断。
+- 未登录或登录过期时退出码为 `3`，权限不足为 `4`，便于脚本和 GUI 判断；完整退出码见上面的命令行一节。
 - 登录态不写进 `data/`：Linux 在 `$XDG_RUNTIME_DIR/chat-deepseek/sessions/`（tmpfs），macOS 在 `$TMPDIR/chat-deepseek/sessions/`，Windows 在 `%LOCALAPPDATA%\chat-deepseek\run\sessions\`；数据库只保存 token 的 SHA-256。
 - 非交互场景用 `--password-stdin`，密码不会出现在命令行参数里。
 
@@ -156,7 +175,7 @@ Linux 不附带预编译 GUI。PyInstaller onefile 会绑定构建机的 glibc�
 
 ```text
 data/
-  config.json          # 监听地址等非敏感配置
+  config.json          # 监听地址、Public URL、API 地址、备份地址
   chat.db              # SQLite（账户、会话、附件元数据、设置）
   master.key           # API Key 加密主密钥（0600）
   files/<user_id>/     # 附件原件
@@ -173,10 +192,10 @@ API Key 使用 AES-256-GCM 加密后写入 SQLite，`master.key` 单独保存；
 
 备份前先停止服务。`backup` 会检查数据目录里是否存在 `chat.db-wal` 或 `chat.db-shm`，任一存在就拒绝备份或恢复，因为它们通常说明服务仍在运行。
 
-备份地址默认是 `data/backups/`。可以用 `--backup-dir` 改到其他目录；备份地址不能是数据目录本身。
+备份地址按 `--backup-dir` > `config.json` 的 `backup_dir` > `data/backups/` 解析，`backup`、`backup list`、`backup restore` 使用同一套规则。可以用 `config set backup_dir /path/to/backups` 设为长期默认，`config set backup_dir ""` 清除；备份地址不能是数据目录本身。
 
 ```sh
-# 默认写到 data/backups/chat-deepseek-<时间>.zip
+# 没设置 backup_dir 时写到 data/backups/chat-deepseek-<时间>.zip
 ./chat-deepseek backup
 
 # 改备份地址
@@ -197,6 +216,36 @@ API Key 使用 AES-256-GCM 加密后写入 SQLite，`master.key` 单独保存；
 ZIP 内容相对于数据目录：`config.json`、`chat.db`、`master.key`、`files/`，不会把 `backups/` 或自定义备份目录打进去。
 
 `backup restore` 会用备份覆盖这四项；备份里没有的项会被删除，以回到备份时的状态。恢复时会保留 `backups/`。交互式终端会要求输入 `yes` 确认；脚本或 GUI 使用 `--yes`。恢复完成后需要重新启动服务。
+
+`config.json` 也会进入备份 ZIP，所以恢复会连 `backup_dir` 一起恢复到备份时的值。换机器或原路径不存在时，恢复后需要重新 `config set backup_dir`（或每次加 `--backup-dir`），否则下次备份会写到旧地址。
+
+## 常驻运行
+
+默认的 `serve` 是前台进程，按 `Ctrl+C` 或收到 `SIGTERM` 退出；适合 SSH 会话、tmux、nohup 或自建 supervisor。Linux 使用 systemd 时，可以用 `service` 生成 unit，不需要手写：
+
+```sh
+# 用户级（当前用户，不需要 root）
+./chat-deepseek service install --enable
+./chat-deepseek service start
+
+# 让用户服务在注销后继续运行
+loginctl enable-linger "$USER"
+```
+
+- `install` 只写 unit 并执行 `daemon-reload`，不会启动；`--enable` 只设置开机自启。重复安装需要 `--force`。
+- 用户级 unit 在 `~/.config/systemd/user/chat-deepseek.service`，`WantedBy=default.target`；没有开启 linger 时注销会停止服务，CLI 会打印提示，但不会自动执行 `loginctl`。
+- 系统级 unit 在 `/etc/systemd/system/chat-deepseek.service`，`WantedBy=multi-user.target`，需要 root，并显式指定运行用户和数据目录：
+
+```sh
+sudo ./chat-deepseek service install --system --run-as chat --data-dir /srv/chat-deepseek/data --enable
+sudo ./chat-deepseek service start --system
+```
+
+  服务不会以 root 运行；`--run-as` 也可以用 `SUDO_USER` 推断，但 `--data-dir` 必须显式给出。同时存在用户级 unit 时不要同时启动，两者会争抢同一端口。
+- `service stop` / `restart` / `status` / `uninstall` 都支持 `--system`；`uninstall` 会停止、取消自启并删除 unit，不会删除数据。
+- 日志交给 journald：`journalctl --user -u chat-deepseek`（用户级）或 `sudo journalctl -u chat-deepseek`（系统级）。
+- 只有 Linux + systemd 支持 `service`。Windows 用任务计划程序或 NSSM 托管 `chat-deepseek serve`；macOS 用 LaunchAgent；Linux 没有 systemd 时用 tmux、nohup 或 NAS 自带的任务计划。
+- 同一个数据目录同时只能有一个服务实例；`serve` 的监听地址来自 `config.json`，unit 里不写 `--listen`。
 
 ## 功能
 

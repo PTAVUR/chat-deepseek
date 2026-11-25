@@ -27,7 +27,7 @@ func runBackup(args []string) error {
 			return runBackupCreate(args[1:])
 		}
 		if !strings.HasPrefix(args[0], "-") {
-			return fmt.Errorf("未知 backup 子命令 %q；可用：list、restore", args[0])
+			return usagef("未知 backup 子命令 %q；可用：list、restore", args[0])
 		}
 	}
 	return runBackupCreate(args)
@@ -40,10 +40,10 @@ func runBackupCreate(args []string) error {
 	backupDir := fs.String("backup-dir", "", "备份地址，默认是 data/backups")
 	output := fs.String("output", "", "输出 ZIP 路径（默认写到备份地址）")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 0 {
-		return errors.New("backup 不接受位置参数")
+		return usagef("backup 不接受位置参数")
 	}
 	op, err := authorize(*dataDir, account.GroupOwner)
 	if err != nil {
@@ -51,7 +51,11 @@ func runBackupCreate(args []string) error {
 	}
 	op.close()
 	dir := op.dataDir
-	path, err := backup.Create(dir, backupDirValue(dir, *backupDir), *output)
+	backupDirectory, err := resolveBackupDir(dir, *backupDir)
+	if err != nil {
+		return err
+	}
+	path, err := backup.Create(dir, backupDirectory, *output)
 	if err != nil {
 		return err
 	}
@@ -65,10 +69,10 @@ func runBackupList(args []string) error {
 	dataDir := fs.String("data-dir", "", "数据目录")
 	backupDir := fs.String("backup-dir", "", "备份地址，默认是 data/backups")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 0 {
-		return errors.New("backup list 不接受位置参数")
+		return usagef("backup list 不接受位置参数")
 	}
 	op, err := authorize(*dataDir, account.GroupOwner)
 	if err != nil {
@@ -76,7 +80,11 @@ func runBackupList(args []string) error {
 	}
 	op.close()
 	dir := op.dataDir
-	archives, err := backup.List(backupDirValue(dir, *backupDir))
+	backupDirectory, err := resolveBackupDir(dir, *backupDir)
+	if err != nil {
+		return err
+	}
+	archives, err := backup.List(backupDirectory)
 	if err != nil {
 		return err
 	}
@@ -99,10 +107,10 @@ func runBackupRestore(args []string) error {
 	backupDir := fs.String("backup-dir", "", "备份地址，默认是 data/backups")
 	yes := fs.Bool("yes", false, "跳过确认")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err)
 	}
 	if fs.NArg() != 1 {
-		return errors.New("用法：chat-deepseek backup restore [--yes] <备份文件>")
+		return usagef("用法：chat-deepseek backup restore [--yes] <备份文件>")
 	}
 	dir, err := config.ResolveDataDir(*dataDir)
 	if err != nil {
@@ -132,7 +140,11 @@ func runBackupRestore(args []string) error {
 			return errors.New("已取消恢复")
 		}
 	}
-	archivePath, err := backup.Restore(dir, backupDirValue(dir, *backupDir), name)
+	backupDirectory, err := resolveBackupDir(dir, *backupDir)
+	if err != nil {
+		return err
+	}
+	archivePath, err := backup.Restore(dir, backupDirectory, name)
 	if err != nil {
 		return err
 	}
@@ -154,9 +166,14 @@ func humanSize(size int64) string {
 	}
 }
 
-func backupDirValue(dataDir, value string) string {
-	if strings.TrimSpace(value) == "" {
-		return backup.DefaultDir(dataDir)
+// resolveBackupDir 按 --backup-dir > config.json backup_dir > data/backups 解析。
+func resolveBackupDir(dataDir, flagValue string) (string, error) {
+	if value := strings.TrimSpace(flagValue); value != "" {
+		return filepath.Abs(value)
 	}
-	return value
+	cfg, err := config.Load(dataDir)
+	if err != nil {
+		return "", err
+	}
+	return config.ResolveBackupDir(dataDir, cfg.BackupDir)
 }
