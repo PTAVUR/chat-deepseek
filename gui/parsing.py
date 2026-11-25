@@ -750,6 +750,15 @@ def explain_failure(
             "请检查数据目录和备份路径是否仍然存在。",
         )
 
+    if command == "service" and any(
+        marker in lowered for marker in ("systemctl", "loginctl")
+    ):
+        return Failure(
+            "systemd 操作失败",
+            "服务命令没有完成，请确认 unit 配置、systemd 用户管理器和目录权限后重试。",
+            combined.strip(),
+        )
+
     return Failure(
         "未知错误",
         "chat-deepseek 返回了无法识别的结果。",

@@ -15,7 +15,26 @@ import (
 // newServiceManager 便于测试替换 systemd 探测结果。
 var newServiceManager = service.New
 
+const serviceUsage = `用法：chat-deepseek service <install|uninstall|start|stop|restart|status> [--system]
+
+  install    写入 unit 并重新加载（--enable / --disable 开机自启）
+  uninstall  停止并删除 unit
+  start      启动服务
+  stop       停止服务
+  restart    重启服务
+  status     查看状态
+
+--system 操作系统级服务，需要 root；install 还需要 --run-as 和 --data-dir。
+`
+
 func runService(args []string) error {
+	if len(args) == 1 {
+		switch args[0] {
+		case "-h", "--help", "help":
+			fmt.Fprint(os.Stdout, serviceUsage)
+			return nil
+		}
+	}
 	if len(args) == 0 {
 		return usagef("用法：chat-deepseek service <install|uninstall|start|stop|restart|status>")
 	}
@@ -43,6 +62,7 @@ func runServiceInstall(args []string) error {
 	dataDir := fs.String("data-dir", "", "数据目录")
 	system := fs.Bool("system", false, "安装系统级服务（需要 root）")
 	enable := fs.Bool("enable", false, "设置开机自启（不启动）")
+	disable := fs.Bool("disable", false, "取消开机自启")
 	force := fs.Bool("force", false, "覆盖已有 unit")
 	runAs := fs.String("run-as", "", "系统级服务的运行用户")
 	if err := fs.Parse(args); err != nil {
@@ -50,6 +70,9 @@ func runServiceInstall(args []string) error {
 	}
 	if fs.NArg() != 0 {
 		return usagef("service install 不接受位置参数")
+	}
+	if *enable && *disable {
+		return usagef("service install --enable 和 --disable 不能同时使用")
 	}
 	if *system && strings.TrimSpace(*dataDir) == "" {
 		return usagef("service install --system 需要显式 --data-dir <dir>")
@@ -92,6 +115,7 @@ func runServiceInstall(args []string) error {
 		Binary:  binary,
 		RunAs:   user,
 		Enable:  *enable,
+		Disable: *disable,
 		Force:   *force,
 	})
 	if err != nil {
@@ -100,6 +124,8 @@ func runServiceInstall(args []string) error {
 	fmt.Printf("已写入 systemd unit：%s\n", result.UnitPath)
 	if result.Enabled {
 		fmt.Println("已设置开机自启；服务尚未启动")
+	} else if *disable {
+		fmt.Println("已取消开机自启")
 	}
 	for _, warning := range result.Warnings {
 		fmt.Fprintln(os.Stderr, warning)

@@ -15,11 +15,11 @@
 
 ## 服务管理
 
-- Linux 且 systemd 可用时，服务卡片会显示 systemd 用户服务的 unit、运行、开机自启和 linger 状态；可以启动、停止、重启、安装、更新和卸载。
+- Linux 且 systemd 可用时，服务卡片显示 systemd 服务的安装位置（用户目录）、运行、开机自启和 linger 状态；可以启动、停止、重启、安装、更新和卸载。
 - 未安装 systemd 服务时，“启动服务”走原来的前台 `serve` 子进程，关闭窗口会停止；安装后启动/停止/重启改走 `service start` / `service stop` / `service restart`，关闭窗口不会停止 systemd 服务。
-- “安装服务”打开对话框，显示 unit 路径、可执行文件和数据目录，可以选择“开机自启”（`service install --enable`）和“安装后立即启动”（`service start`）；安装本身只写 unit 和 `daemon-reload`。未开启 linger 时注销后服务会停止，对话框提供 `loginctl enable-linger <user>` 的复制按钮。
-- 系统级安装需要 root，GUI 不提权；对话框里提供完整的 `service install --system --run-as <user> --data-dir <dir>` 命令供复制到终端执行。
-- “更新服务”按当前二进制和数据目录重写 unit（`service install --force`），保留开机自启设置，可选更新后启动或重启。
+- “安装服务”打开对话框，用下拉框选择“用户目录”或“系统目录”。“开机自启”对两者都生效；用户目录还可以设置“安装后立即启动”。用户目录直接执行安装；系统目录需要 root，GUI 不执行，只给出“安装命令”和“CLI 帮助”两条单行字段，各自带“复制”按钮；单行显示不下时中间省略，复制的是完整命令。安装后在终端运行 CLI 帮助查看启动、停止、重启和卸载命令。
+- “更新服务”按当前配置重写 unit（`service install --force`），可以调整开机自启；默认更新后重启服务，也可以关掉开关只写 unit。
+- linger 行按当前状态显示 `loginctl enable-linger <user>` 或 `loginctl disable-linger <user>`，右侧可直接复制。
 - Windows/macOS 和没有 systemd 的 Linux 不支持 `service`，继续使用前台会话模式；常驻请用任务计划程序/NSSM、LaunchAgent 或 tmux/nohup。
 
 ## 安装与运行
@@ -53,7 +53,7 @@ cli.py          子进程执行与 serve 进程管理
 parsing.py      解析 info / user list / whoami / backup list / serve / version 输出
 server_config.py 计算服务端默认路径和默认监听/API 地址
 service_plan.py  生成 systemd unit 路径与 service 命令
-gui_config.py    读写 v2 config.gui.json（连接方式、二进制/数据目录、上次登录用户名）
+gui_config.py    读写 v2 config.gui.json（连接方式、二进制/数据目录、用户名）
 dialogs.py      Qt 登录、输入、确认、路径选择、设置和服务安装/更新对话框
 widgets.py      自绘卡片、按钮、输入框、状态点、组标签与成员行
 fonts.py        选择 Windows/macOS/Linux 的系统 UI 字体

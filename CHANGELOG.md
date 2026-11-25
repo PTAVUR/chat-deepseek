@@ -8,7 +8,7 @@
 
 - 新增 `info`：只读输出固定 `key=value`（版本、路径、配置、初始化状态、systemd 状态），不创建数据库、`config.json` 或 WAL。
 - 新增 `config set`：修改 `listen` / `public_url` / `api_origin` / `backup_dir`，保留 `config.json` 里的未知字段并原子写 `0600`；`backup_dir` 支持清空回默认。
-- 新增 `service`：Linux systemd 托管，支持 user/system 两种范围（`install` / `uninstall` / `start` / `stop` / `restart` / `status`）。`install` 只生成 unit 并 `daemon-reload`，不启动；`--enable` 只设置开机自启。Windows/macOS 明确不支持，继续前台 `serve` 或平台 supervisor。
+- 新增 `service`：Linux systemd 托管，支持 user/system 两种范围（`install` / `uninstall` / `start` / `stop` / `restart` / `status`）。`install` 只生成 unit 并 `daemon-reload`，不启动；`--enable` / `--disable` 切换开机自启。`service --help` 列出全部子命令和 `--system` 说明。Windows/macOS 明确不支持，继续前台 `serve` 或平台 supervisor。
 - `backup` / `backup list` / `backup restore` 统一按 `--backup-dir` > `config.json` 的 `backup_dir` > `data/backups` 解析备份地址。
 - 退出码补齐用法错误 `2`；`info`、`config set`、`service` 不需要应用登录。
 
@@ -16,11 +16,11 @@
 
 - `config.gui.json` 升级到 v2（`version`、`connection`、`local{binary_dir,data_dir,username}`）；旧版顶层字段自动迁移，`backup_dir` 改由 `config set backup_dir` 写入 `config.json`。
 - 设置页和服务状态改用 `info` / `config set`，GUI 不再直接读写 `data/config.json`；监听地址、Public URL、API 地址和备份地址保存后由 `serve` / `backup` 读取。
-- Linux + systemd 增加服务卡片：显示 unit、运行、开机自启和 linger 状态，支持启动、停止、重启、安装、更新和卸载；未安装时保留前台会话模式，关闭 GUI 不会停止 systemd 服务。
-- 安装服务改为对话框：显示 unit 路径、可执行文件和数据目录，可选开机自启和安装后立即启动；提供 linger 与系统级安装命令的复制按钮。更新服务用 `service install --force` 按当前路径重写 unit。
-- 安装/更新对话框改为与设置页一致的表单样式：只读字段展示路径，命令行使用普通 secondary「复制」按钮，不再用看不出按钮的 ghost 文字。
+- Linux + systemd 增加服务卡片：显示服务安装位置（用户目录）、运行、开机自启和 linger 状态，支持启动、停止、重启、安装、更新和卸载；未安装时保留前台会话模式，关闭 GUI 不会停止 systemd 服务。
+- 安装服务改为对话框，用下拉框选择用户目录或系统目录：用户目录直接安装；系统目录需要 root，GUI 不执行，只给出“安装命令”和“CLI 帮助”两条单行字段，各自带「复制」按钮，单行显示不下时中间省略，复制的是完整命令。用户目录可选开机自启和安装后立即启动；linger 行按当前状态给出 `enable-linger` 或 `disable-linger` 命令。更新服务用 `service install --force` 按当前配置重写 unit，并可在对话框里调整开机自启；更新后统一走 `service restart`，且显式写入 `--enable` 或 `--disable`，避免 GUI 缓存状态导致旧进程继续运行或开机自启状态不一致；更新、启动、停止、重启或卸载失败时先刷新状态再显示错误，不再静默无反馈。
+- 安装/更新对话框沿用设置页的表单样式：不再展示不可修改的 unit、可执行文件和数据路径，只保留“安装位置”和命令；下拉框与 40px 字段同高，linger 和系统命令都用 secondary「复制」按钮。
 - Windows/macOS 不支持 systemd，继续使用会话模式；常驻交给平台 supervisor。
-- GUI 测试增加到 86 个，新增 v1→v2 迁移、`info` 解析、设置写 `config.json`、service 命令拼装和 fake systemd 服务流程验证。
+- GUI 测试增加到 91 个，新增 v1→v2 迁移、`info` 解析、设置写 `config.json`、service 命令拼装和 fake systemd 服务流程验证。
 
 ## 0.1.3-official0.1.4 - 2026-11-25
 

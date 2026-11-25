@@ -75,7 +75,7 @@ Windows 用 `gui\.venv\Scripts\python gui\app.py`；更完整的命令见 [gui/R
 
 `gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。GUI 本地配置是平台用户配置目录的 `config.gui.json`（v2，旧版会自动迁移）：Linux 是 `~/.config/chat-deepseek/`，macOS 是 `~/Library/Application Support/chat-deepseek/`，Windows 是 `%APPDATA%\chat-deepseek\`；里面只保存二进制目录、数据目录和上次登录的用户名。监听地址、Public URL、API 地址和备份地址通过 `chat-deepseek config set` 写入数据目录的 `config.json`，`serve` 启动时直接读取。左下角的“恢复默认”在 Windows/Linux 回到二进制同级 `data/`、`data/backups/`，在 macOS 回到 `~/Library/Application Support/chat-deepseek/data/`；监听地址和 API 地址回到 `127.0.0.1:8090` 和官方地址。数据卡片可以立即备份、查看备份记录并从记录中恢复；恢复前必须先停止服务。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里；上次登录的用户名记在 `config.gui.json`，不保存密码。
 
-Linux + systemd 时，服务卡片会显示 systemd 用户服务的 unit、运行、开机自启和 linger 状态，可以启动、停止、重启、安装、更新和卸载。安装对话框会显示 unit 路径、可执行文件和数据目录，可选“开机自启”（`--enable`）和“安装后立即启动”（`service start`）；安装本身只写 unit 并 `daemon-reload`。未开启 linger 时注销后服务会停止，对话框提供 `loginctl enable-linger <user>` 的复制按钮；“更新服务”按当前二进制和数据目录重写 unit（`--force`），保留开机自启设置。系统级安装需要 root，GUI 不提权，对话框提供完整的 `service install --system --run-as <user> --data-dir <dir>` 命令供复制到终端执行。未安装服务时“启动服务”走前台会话模式，关闭窗口会停止该进程；已安装的 systemd 服务不会被关闭窗口停止。Windows/macOS 没有 systemd，继续使用会话模式，常驻交给任务计划程序/NSSM 或 LaunchAgent。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止会话进程是强制结束；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
+Linux + systemd 时，服务卡片显示 systemd 服务的安装位置（用户目录）、运行、开机自启和 linger 状态，可以启动、停止、重启、安装、更新和卸载。安装对话框用下拉框选择“用户目录”或“系统目录”：用户目录直接安装，不需要 root；系统目录需要 root，GUI 不执行安装，只给出“安装命令”和“CLI 帮助”两条单行字段，各自带复制按钮；单行显示不下时中间省略，复制的是完整命令。安装后在终端运行 CLI 帮助查看启动、停止、重启和卸载命令。用户级安装本身只写 unit 并 `daemon-reload`；未开启 linger 时注销后服务会停止，对话框按当前状态提供 `loginctl enable-linger` 或 `loginctl disable-linger` 命令的复制按钮；“更新服务”按当前配置重写 unit（`--force`）并重启服务，可以同时调整开机自启。未安装服务时“启动服务”走前台会话模式，关闭窗口会停止该进程；已安装的 systemd 服务不会被关闭窗口停止。Windows/macOS 没有 systemd，继续使用会话模式，常驻交给任务计划程序/NSSM 或 LaunchAgent。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止会话进程是强制结束；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
 
 GUI 使用 CLI 的登录态：不登录也能启停、安装、更新服务和改设置，账户区显示锁图标，备份区提示登录后查看；点击登录、刷新、添加或任一备份按钮会弹出登录框。只有 Admin 和 Owner 能登录，按钮会按当前身份置灰不可执行的操作；登录 15 分钟后过期，关闭 GUI 会自动退出登录。
 
@@ -232,7 +232,7 @@ ZIP 内容相对于数据目录：`config.json`、`chat.db`、`master.key`、`fi
 loginctl enable-linger "$USER"
 ```
 
-- `install` 只写 unit 并执行 `daemon-reload`，不会启动；`--enable` 只设置开机自启。重复安装需要 `--force`。
+- `install` 只写 unit 并执行 `daemon-reload`，不会启动；`--enable` / `--disable` 切换开机自启。重复安装需要 `--force`。`service --help` 列出 install / uninstall / start / stop / restart / status 和 `--system` 说明。
 - 用户级 unit 在 `~/.config/systemd/user/chat-deepseek.service`，`WantedBy=default.target`；没有开启 linger 时注销会停止服务，CLI 会打印提示，但不会自动执行 `loginctl`。
 - 系统级 unit 在 `/etc/systemd/system/chat-deepseek.service`，`WantedBy=multi-user.target`，需要 root，并显式指定运行用户和数据目录：
 

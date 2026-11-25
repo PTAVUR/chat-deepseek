@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
@@ -1184,6 +1185,143 @@ class DisplayField(QFrame):
         painter.setBrush(QColor(c["card_alt"]))
         painter.setPen(QPen(QColor(c["border"]), 1))
         painter.drawPath(_rounded_path(rect, 20))
+        painter.end()
+
+
+class SelectField(QPushButton):
+    """下拉选择：外观与 Field 一致，点击后在下方弹出菜单。
+
+    没有用 QComboBox，是因为 Fusion 的弹出列表和箭头很难和自绘的 40px
+    胶囊字段对齐；这里只借 QMenu 的键盘导航，按钮本身仍由 QPainter 画。
+    """
+
+    changed = Signal(str)
+
+    def __init__(
+        self,
+        options: list[tuple[str, str]],
+        parent: QWidget | None = None,
+        height: int = 40,
+    ) -> None:
+        super().__init__(parent)
+        self.setFont(theme.font(13))
+        self.setFixedHeight(height)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFlat(True)
+        self._options = list(options)
+        self._labels = {value: label for value, label in self._options}
+        self._value = self._options[0][0] if self._options else ""
+        self._hovered = False
+        # QPushButton 默认的绘制会盖掉自绘背景；清空 text 以免重复。
+        self.setText("")
+        self.clicked.connect(self._show_menu)
+
+    def value(self) -> str:
+        return self._value
+
+    def label(self) -> str:
+        return self._labels.get(self._value, self._value)
+
+    def setValue(self, value: str) -> None:  # noqa: N802
+        if value not in self._labels or value == self._value:
+            return
+        self._value = value
+        self.update()
+        self.changed.emit(value)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        metrics = QFontMetrics(self.font())
+        width = max(
+            (metrics.horizontalAdvance(label) for label in self._labels.values()),
+            default=0,
+        )
+        return QSize(max(220, width + 58), self.height())
+
+    def _show_menu(self) -> None:
+        menu = QMenu(self)
+        menu.setFont(theme.font(13))
+        for value, label in self._options:
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(value == self._value)
+            action.triggered.connect(
+                lambda _checked=False, value=value: self.setValue(value)
+            )
+        menu.setMinimumWidth(self.width())
+        menu.exec(self.mapToGlobal(QPoint(0, self.height() + 4)))
+        menu.deleteLater()
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:  # noqa: N802
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802
+        super().focusOutEvent(event)
+        self.update()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            self._show_menu()
+            return
+        super().keyPressEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        c = theme.colors()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        focused = self.hasFocus()
+        if focused:
+            border = c["primary"]
+        elif self._hovered and self.isEnabled():
+            border = c["border_strong"]
+        else:
+            border = c["border"]
+        painter.setBrush(QColor(c["card_alt"]))
+        painter.setPen(QPen(QColor(border), 1))
+        painter.drawPath(_rounded_path(rect, 20))
+
+        text_color = c["text"] if self.isEnabled() else c["muted"]
+        painter.setPen(QColor(text_color))
+        painter.setFont(self.font())
+        metrics = QFontMetrics(self.font())
+        text = metrics.elidedText(
+            self.label(), Qt.TextElideMode.ElideRight, self.width() - 58
+        )
+        painter.drawText(
+            QRectF(14, 0, self.width() - 50, self.height()),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            text,
+        )
+
+        x = self.width() - 21
+        y = self.height() / 2 - 2
+        path = QPainterPath()
+        path.moveTo(x - 4, y)
+        path.lineTo(x, y + 4)
+        path.lineTo(x + 4, y)
+        painter.setPen(
+            QPen(
+                QColor(c["muted"]),
+                1.6,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
+        )
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
         painter.end()
 
 

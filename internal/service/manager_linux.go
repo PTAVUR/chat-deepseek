@@ -254,6 +254,10 @@ func (m *Manager) Install(ctx context.Context, opts InstallOptions) (InstallResu
 			return InstallResult{}, fmt.Errorf("unit 已写入 %s，但 enable 失败：%w", path, err)
 		}
 		enabled = true
+	} else if opts.Disable {
+		if err := m.systemctl(ctx, opts.Scope, "disable", m.unitName()); err != nil {
+			return InstallResult{}, fmt.Errorf("unit 已写入 %s，但 disable 失败：%w", path, err)
+		}
 	}
 	if opts.Scope == ScopeUser && !m.linger(ctx) {
 		name, err := m.CurrentUser()

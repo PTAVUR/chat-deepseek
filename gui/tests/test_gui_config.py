@@ -83,7 +83,11 @@ class LoadTest(unittest.TestCase):
                     {
                         "version": 2,
                         "connection": 3,
-                        "local": {"binary_dir": 4, "data_dir": " ", "username": None},
+                        "local": {
+                            "binary_dir": 4,
+                            "data_dir": " ",
+                            "username": None,
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -119,6 +123,29 @@ class SaveTest(unittest.TestCase):
         self.assertNotIn("legacy_backup_dir", raw)
         if os.name == "posix":
             self.assertEqual(mode, 0o600)
+
+    def test_save_drops_stale_service_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp, "config.gui.json")
+            path.write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "connection": "local",
+                        "local": {
+                            "data_dir": "/srv/data",
+                            "service_scope": "system",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            gui_config.save(
+                path,
+                gui_config.Config(data_dir="/srv/data"),
+            )
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        self.assertNotIn("service_scope", raw["local"])
 
     def test_save_preserves_connection(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

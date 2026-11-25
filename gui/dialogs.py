@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -107,6 +106,7 @@ class BaseDialog(QDialog):
         cancel_button.setMinimumWidth(88)
         cancel_button.clicked.connect(self.reject)
         row.addWidget(cancel_button)
+        self.cancel_button = cancel_button
         primary_button = widgets.button(
             primary, "danger" if danger else "primary", height=36
         )
@@ -114,7 +114,9 @@ class BaseDialog(QDialog):
         primary_button.setDefault(True)
         primary_button.clicked.connect(on_primary)
         row.addWidget(primary_button)
+        self.primary_button = primary_button
         self._root.addLayout(row)
+        return primary_button
 
     def exec_modal(self) -> int:
         self.adjustSize()
@@ -599,10 +601,9 @@ class SettingsDialog(BaseDialog):
 
 
 class InstallServiceDialog(BaseDialog):
-    """安装/更新 systemd 用户服务，布局与设置对话框一致。
+    """安装/更新 systemd 服务。
 
-    GUI 只能安装用户级服务；系统级需要 root，这里只生成命令供用户复制，
-    不在 GUI 里提权。
+    用户级直接执行安装；系统级需要 root，GUI 只生成安装命令和 CLI 帮助命令。
     """
 
     def __init__(
@@ -611,7 +612,6 @@ class InstallServiceDialog(BaseDialog):
         *,
         binary: str,
         data_dir: str,
-        unit_path: str,
         linger: bool,
         username: str,
         installed: bool = False,
@@ -623,96 +623,198 @@ class InstallServiceDialog(BaseDialog):
         self.binary = binary
         self.data_dir = data_dir
         self.username = username or "<user>"
+        self.scope = "user"
         self.installed = installed
-        self.enabled = enabled
-        if installed:
-            self._description(
-                "按当前二进制和数据目录重写 systemd unit（--force），"
-                "保留开机自启设置；不会改动数据目录。"
-            )
-        else:
-            self._description(
-                "把 chat-deepseek 注册为 systemd 用户服务：写入 unit 并重新加载 "
-                "systemd，不会改动数据目录。"
-            )
+        self.linger = linger
+        self.active = active
 
         grid = QGridLayout()
         grid.setContentsMargins(0, 6, 0, 0)
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(12)
         grid.setColumnStretch(1, 1)
+        self._grid = grid
+        self._row = 0
 
-        rows = [
-            ("运行范围", "当前用户（systemd --user）"),
-            ("unit 文件", unit_path),
-            ("可执行文件", binary),
-            ("数据目录", data_dir),
-        ]
-        if installed:
-            rows.append(
-                (
-                    "开机自启",
-                    "已开启（更新时保留）" if enabled else "未开启（更新时保留）",
-                )
-            )
-        row = 0
-        for caption, value in rows:
-            grid.addWidget(widgets.label(caption, 12, 500), row, 0)
-            grid.addWidget(widgets.DisplayField(value), row, 1)
-            row += 1
-
-        self.enable = None
+        self.scope_field = None
         if not installed:
-            self.enable = widgets.Switch()
-            self.enable.setChecked(True)
-            grid.addWidget(widgets.label("开机自启", 12, 500), row, 0)
-            grid.addWidget(self._switch_holder(self.enable), row, 1)
-            row += 1
-            start_label = "安装后立即启动"
-        elif active:
-            start_label = "更新后重启服务"
-        else:
-            start_label = "更新后启动服务"
+            self.scope_field = widgets.SelectField(
+                [
+                    ("user", "用户目录"),
+                    ("system", "系统目录"),
+                ]
+            )
+            self.scope_field.setAccessibleName("安装位置")
+            self.scope_field.changed.connect(self._set_scope)
+            self._add_row("安装位置", self.scope_field)
 
+        self.enable = widgets.Switch()
+        self.enable.setChecked(True if not installed else enabled)
+        self._add_row("开机自启", self._switch_holder(self.enable))
+
+        if installed:
+            start_label = "更新后重启服务" if active else "更新后启动服务"
+        else:
+            start_label = "安装后立即启动"
         self.start_now = widgets.Switch()
         self.start_now.setChecked(True)
-        grid.addWidget(widgets.label(start_label, 12, 500), row, 0)
-        grid.addWidget(self._switch_holder(self.start_now), row, 1)
-        row += 1
+        self.start_label = widgets.label(start_label, 12, 500)
+        self.start_holder = self._switch_holder(self.start_now)
+        grid.addWidget(self.start_label, self._row, 0)
+        grid.addWidget(self.start_holder, self._row, 1)
+        self._row += 1
 
-        linger_text = (
-            "已开启：注销后服务继续运行"
-            if linger
-            else service_plan.linger_command(self.username)
+        self.linger_label = widgets.label("linger", 12, 500)
+        self.linger_field = widgets.DisplayField(self._linger_command())
+        self.linger_button = widgets.button(
+            "复制", "secondary", height=38, small=True
         )
-        self.linger_field = widgets.DisplayField(linger_text)
-        grid.addWidget(widgets.label("linger", 12, 500), row, 0)
-        if linger:
-            grid.addWidget(self.linger_field, row, 1)
-        else:
-            holder, _button = self._with_copy(
-                self.linger_field,
-                lambda: service_plan.linger_command(self.username),
+        self.linger_button.setMinimumWidth(64)
+        self.linger_button.setToolTip(self._linger_command())
+        self.linger_button.clicked.connect(
+            lambda _checked=False: self._copy(
+                self._linger_command(), self.linger_button
             )
-            grid.addWidget(holder, row, 1)
-        row += 1
-
-        self.system_field = widgets.DisplayField(self._system_display())
-        self.system_field.setToolTip(self._system_command())
-        grid.addWidget(widgets.label("系统级服务", 12, 500), row, 0)
-        holder, self.system_button = self._with_copy(
-            self.system_field, self._system_command
         )
-        grid.addWidget(holder, row, 1)
+        self.linger_holder = self._copy_holder(
+            self.linger_field, self.linger_button
+        )
+        grid.addWidget(self.linger_label, self._row, 0)
+        grid.addWidget(self.linger_holder, self._row, 1)
+        self._row += 1
 
-        if self.enable is not None:
-            self.enable.toggled.connect(
-                lambda _checked=False: self._refresh_system_command()
+        self.install_command_text = self._install_command()
+        self.install_command_field = widgets.DisplayField(
+            self.install_command_text
+        )
+        self.install_command_button = self._command_copy_button(
+            "安装", lambda _checked=False: self._copy(
+                self.install_command_text, self.install_command_button
             )
+        )
+        self.install_command_label = widgets.label("安装命令", 12, 500)
+        self.install_command_holder = self._copy_holder(
+            self.install_command_field, self.install_command_button
+        )
+        grid.addWidget(self.install_command_label, self._row, 0)
+        grid.addWidget(self.install_command_holder, self._row, 1)
+        self._row += 1
+
+        self.help_command_text = service_plan.service_help_command(self.binary)
+        self.help_command_field = widgets.DisplayField(self.help_command_text)
+        self.help_command_button = self._command_copy_button(
+            "帮助", lambda _checked=False: self._copy(
+                self.help_command_text, self.help_command_button
+            )
+        )
+        self.help_command_label = widgets.label("CLI 帮助", 12, 500)
+        self.help_command_holder = self._copy_holder(
+            self.help_command_field, self.help_command_button
+        )
+        grid.addWidget(self.help_command_label, self._row, 0)
+        grid.addWidget(self.help_command_holder, self._row, 1)
+        self._row += 1
+
+        self.enable.toggled.connect(self._update_install_command)
+
         self._root.addLayout(grid)
         self._root.addWidget(self._error_label())
         self._root.addStretch(1)
-        self._buttons("更新" if installed else "安装", self._ok)
+        self.primary_button = self._buttons(self._primary_label(), self._ok)
+        self._sync_scope()
+
+    def _add_row(self, caption: str, editor: QWidget) -> QWidget:
+        self._grid.addWidget(widgets.label(caption, 12, 500), self._row, 0)
+        self._grid.addWidget(editor, self._row, 1)
+        self._row += 1
+        return editor
+
+    def _copy_holder(
+        self, field: widgets.DisplayField, button: widgets.ActionButton
+    ) -> QWidget:
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(field, 1)
+        row.addWidget(button, 0, Qt.AlignmentFlag.AlignVCenter)
+        return holder
+
+    def _command_copy_button(self, name: str, handler) -> widgets.ActionButton:
+        button = widgets.button("复制", "secondary", height=38, small=True)
+        button.setMinimumWidth(64)
+        button.setAccessibleName(f"复制{name}命令")
+        button.clicked.connect(handler)
+        return button
+
+    def _linger_command(self) -> str:
+        return service_plan.linger_command(
+            self.username, enable=not self.linger
+        )
+
+    def _primary_label(self) -> str:
+        return "更新" if self.installed else "安装"
+
+    def _enable_value(self) -> bool:
+        return self.enable.isChecked()
+
+    def _install_command(self) -> str:
+        return service_plan.system_install_command(
+            self.binary,
+            self.data_dir,
+            run_as=self.username,
+            enable=self._enable_value(),
+        )
+
+    def _update_install_command(self, *_args) -> None:
+        self.install_command_text = self._install_command()
+        self.install_command_field.setText(self.install_command_text)
+        self.install_command_button.setToolTip(self.install_command_text)
+        self.install_command_button.setText("复制")
+
+    def _sync_scope(self) -> None:
+        system = self.scope == "system"
+        self._sync_linger()
+        self._sync_commands()
+        self.start_label.setVisible(not system)
+        self.start_holder.setVisible(not system)
+        self.primary_button.setVisible(not system)
+        self.cancel_button.setText("关闭" if system else "取消")
+        self.cancel_button.setDefault(system)
+        self.primary_button.setDefault(not system)
+        self.primary_button.setText(self._primary_label())
+
+    def _sync_linger(self) -> None:
+        visible = self.scope == "user"
+        self.linger_label.setVisible(visible)
+        self.linger_holder.setVisible(visible)
+        if visible:
+            self.linger_field.setText(self._linger_command())
+            self.linger_button.setToolTip(self._linger_command())
+            self._sync_linger_button()
+
+    def _sync_linger_button(self) -> None:
+        self.linger_button.setVisible(self.scope == "user")
+
+    def _sync_commands(self) -> None:
+        visible = self.scope == "system"
+        for widget in (
+            self.install_command_label,
+            self.install_command_holder,
+            self.help_command_label,
+            self.help_command_holder,
+        ):
+            widget.setVisible(visible)
+        if visible:
+            self.help_command_button.setText("复制")
+            self._update_install_command()
+
+    def _set_scope(self, scope: str) -> None:
+        if scope not in ("user", "system") or scope == self.scope:
+            return
+        self.scope = scope
+        self._sync_scope()
+        self.adjustSize()
 
     def _switch_holder(self, switch: widgets.Switch) -> QWidget:
         holder = QWidget()
@@ -723,68 +825,14 @@ class InstallServiceDialog(BaseDialog):
         row.addWidget(switch, 0, Qt.AlignmentFlag.AlignVCenter)
         return holder
 
-    def _with_copy(
-        self,
-        field: widgets.DisplayField,
-        get_command: Callable[[], str],
-    ) -> tuple[QWidget, widgets.ActionButton]:
-        holder = QWidget()
-        row = QHBoxLayout(holder)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-        row.addWidget(field, 1)
-        button = widgets.button("复制", "secondary", height=38, small=True)
-        button.setMinimumWidth(64)
-        button.setToolTip(get_command())
-        button.clicked.connect(
-            lambda _checked=False, button=button: self._copy(get_command(), button)
-        )
-        row.addWidget(button, 0, Qt.AlignmentFlag.AlignVCenter)
-        return holder, button
-
-    def _system_command(self) -> str:
-        enable = (
-            self.enable.isChecked() if self.enable is not None else self.enabled
-        )
-        return service_plan.system_install_command(
-            self.binary,
-            self.data_dir,
-            self.username,
-            enable=enable,
-        )
-
-    def _system_display(self) -> str:
-        enable = (
-            self.enable.isChecked() if self.enable is not None else self.enabled
-        )
-        parts = [
-            "service",
-            "install",
-            "--system",
-            "--run-as",
-            self.username,
-            "--data-dir",
-            "<数据目录>",
-        ]
-        if enable:
-            parts.append("--enable")
-        return " ".join(parts)
-
-    def _refresh_system_command(self) -> None:
-        command = self._system_command()
-        self.system_field.setText(self._system_display())
-        self.system_field.setToolTip(command)
-        self.system_button.setToolTip(command)
-
     def _copy(self, text: str, button: widgets.ActionButton) -> None:
         QGuiApplication.clipboard().setText(text)
         button.setText("已复制")
 
     def _ok(self) -> None:
         self.value = {
-            "enable": (
-                self.enable.isChecked() if self.enable is not None else self.enabled
-            ),
+            "scope": "user",
+            "enable": self._enable_value(),
             "start": self.start_now.isChecked(),
             "force": self.installed,
         }

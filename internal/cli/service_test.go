@@ -71,6 +71,18 @@ func cliTestManager(t *testing.T, runner *cliFakeSystemd) (*service.Manager, str
 	}, root
 }
 
+func TestCLIServiceHelp(t *testing.T) {
+	c := newTestCLI(t)
+	output := c.must("", "service", "--help")
+	for _, command := range []string{
+		"install", "uninstall", "start", "stop", "restart", "status",
+	} {
+		if !strings.Contains(output, command) {
+			t.Fatalf("service help missing %q: %q", command, output)
+		}
+	}
+}
+
 func TestCLIServiceStatusUnsupported(t *testing.T) {
 	c := newTestCLI(t)
 	useServiceManager(t, &service.Manager{Supported: false, UnitName: service.UnitName})
@@ -132,6 +144,30 @@ func TestCLIServiceInstallUser(t *testing.T) {
 	}
 	if runner.has("systemctl", "--user", "start", service.UnitName) {
 		t.Fatal("install started the service")
+	}
+}
+
+func TestCLIServiceInstallDisable(t *testing.T) {
+	c := newTestCLI(t)
+	c.setup("owner", testOwnerPassword)
+	runner := &cliFakeSystemd{linger: "Linger=yes"}
+	manager, _ := cliTestManager(t, runner)
+	useServiceManager(t, manager)
+
+	output := c.must("", "service", "install", "--disable", "--data-dir", c.dataDir)
+	if !strings.Contains(output, "已取消开机自启") {
+		t.Fatalf("disable output = %q", output)
+	}
+	if !runner.has("systemctl", "--user", "disable", service.UnitName) {
+		t.Fatalf("disable missing, calls = %v", runner.calls)
+	}
+	if runner.has("systemctl", "--user", "enable", service.UnitName) {
+		t.Fatalf("unexpected enable, calls = %v", runner.calls)
+	}
+
+	err := c.expectStatus(exitUsage, "", "service", "install", "--enable", "--disable", "--data-dir", c.dataDir)
+	if !strings.Contains(err.Error(), "不能同时使用") {
+		t.Fatalf("both flags error = %v", err)
 	}
 }
 

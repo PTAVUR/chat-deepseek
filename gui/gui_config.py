@@ -149,6 +149,8 @@ def save(path: str | Path, config: Config) -> None:
         }
     )
     existing["local"] = local
+    # service_scope 是已废弃的卡片范围缓存；写入时顺手清掉。
+    local.pop("service_scope", None)
     # 迁移完成后不再保留 v1 顶层字段；backup_dir 归 config.json。
     for key in ("binary", "data_dir", "backup_dir", "username"):
         existing.pop(key, None)

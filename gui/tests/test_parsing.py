@@ -537,6 +537,16 @@ class ServiceFailureTest(unittest.TestCase):
         )
         self.assertEqual(failure.title, "systemd 服务未安装")
 
+    def test_systemctl_failure_has_actionable_title(self) -> None:
+        failure = parsing.explain_failure(
+            "错误： systemctl restart 失败：restart failed",
+            "",
+            ("service", "restart"),
+            1,
+        )
+        self.assertEqual(failure.title, "systemd 操作失败")
+        self.assertIn("systemctl restart", failure.details or "")
+
 
 if __name__ == "__main__":
     unittest.main()

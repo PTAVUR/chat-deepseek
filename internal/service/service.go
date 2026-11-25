@@ -53,6 +53,8 @@ type InstallOptions struct {
 	Group string
 	// Enable 只执行 enable，不启动服务。
 	Enable bool
+	// Disable 取消开机自启；与 Enable 互斥。
+	Disable bool
 	// Force 允许覆盖已有 unit。
 	Force bool
 }
