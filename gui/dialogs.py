@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import posixpath
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -456,34 +458,55 @@ class SettingsDialog(BaseDialog):
     def __init__(
         self,
         parent: QWidget,
-        binary: str,
-        data_dir: str,
+        *,
+        connection: str,
+        local: dict[str, str],
+        ssh: dict[str, str],
         backup_dir: str,
         listen: str,
         public_url: str,
         api_origin: str,
         defaults: dict[str, str],
+        server_lookup: (
+            Callable[[SettingsDialog, str, dict[str, str], int], None] | None
+        ) = None,
     ) -> None:
-        super().__init__(parent, "设置", 720, 480)
+        # 高度按内容算（见 _fit_height）：SSH 比本机多一行，写死会挤重叠。
+        super().__init__(parent, "设置", 720)
         self.defaults = defaults
-        self._initial_data_dir = data_dir
+        self._initial_local = dict(local)
+        # 打开设置时正在管理的主机：它的服务器配置可以改，另一个主机只能看。
+        self._current_connection = (
+            connection if connection in ("local", "ssh") else "local"
+        )
+        self.server_lookup = server_lookup
         self._description(
-            "二进制目录和数据目录保存在 config.gui.json；监听地址、Public URL、"
-            "API 地址和备份地址通过 chat-deepseek config set 写入数据目录的 config.json。"
+            "连接方式、路径和上次登录用户名保存在 config.gui.json；SSH 使用系统 "
+            "ssh 和你的 ~/.ssh/config（仅密钥/agent）。监听地址、Public URL、"
+            "API 地址和备份地址通过 chat-deepseek config set 写入数据目录的 "
+            "config.json。"
         )
 
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 6, 0, 0)
-        grid.setHorizontalSpacing(14)
-        grid.setVerticalSpacing(12)
-        grid.setColumnStretch(1, 1)
+        self.mode = widgets.SelectField(
+            [("local", "本机"), ("ssh", "SSH 远程")]
+        )
+        self.mode.setAccessibleName("连接方式")
+        if connection in ("local", "ssh"):
+            self.mode.setValue(connection)
+        self.mode.changed.connect(self._mode_changed)
 
         self.binary = _field("二进制目录")
-        self.binary.setText(binary)
+        self.binary.setText(local.get("binary_dir", ""))
         self.data_dir = _field("数据目录")
-        self.data_dir.setText(data_dir)
-        self.backup_dir = _field("备份地址")
-        self.backup_dir.setPlaceholderText("留空表示数据目录下的 backups/")
+        self.data_dir.setText(local.get("data_dir", ""))
+        self.host = _field("nas 或 user@nas")
+        self.host.setText(ssh.get("host", ""))
+        self.remote_binary = _field("/home/you/chat-deepseek")
+        self.remote_binary.setText(ssh.get("binary_dir", ""))
+        self.remote_data = _field("留空使用远端默认数据目录")
+        self.remote_data.setText(ssh.get("data_dir", ""))
+
+        self.backup_dir = _field("留空表示数据目录下的 backups/")
         self.backup_dir.setText(backup_dir)
         self.listen = _field("监听地址")
         self.listen.setText(listen)
@@ -491,37 +514,82 @@ class SettingsDialog(BaseDialog):
         self.public_url.setText(public_url)
         self.api_origin = _field("API 地址")
         self.api_origin.setText(api_origin)
-
-        rows = (
-            ("二进制目录", self.binary, True),
-            ("数据目录", self.data_dir, True),
-            ("备份地址", self.backup_dir, True),
-            ("监听地址", self.listen, False),
-            ("Public URL", self.public_url, False),
-            ("API 地址", self.api_origin, False),
+        self.backup_row, self.backup_pick = self._browse_row(
+            self.backup_dir, "备份地址"
         )
-        for index, (caption, editor, browse) in enumerate(rows):
-            grid.addWidget(widgets.label(caption, 12, 500), index, 0)
-            if browse:
-                holder = QWidget()
-                row = QHBoxLayout(holder)
-                row.setContentsMargins(0, 0, 0, 0)
-                row.setSpacing(8)
-                row.addWidget(editor, 1)
-                pick = widgets.button("浏览", "secondary", height=38, small=True)
-                pick.setMinimumWidth(64)
-                pick.clicked.connect(
-                    lambda _checked=False, editor=editor, caption=caption: self._pick(
-                        caption, editor
-                    )
-                )
-                row.addWidget(pick)
-                grid.addWidget(holder, index, 1)
-            else:
-                grid.addWidget(editor, index, 1)
+
+        # 服务器配置（备份/监听/Public URL/API）属于每台主机自己的
+        # config.json；切连接方式时要按目标主机重新读，不能沿用上一台的。
+        self._server_fields = {
+            "backup_dir": self.backup_dir,
+            "listen": self.listen,
+            "public_url": self.public_url,
+            "api_origin": self.api_origin,
+        }
+        self._server_placeholders = {
+            key: field.edit.placeholderText()
+            for key, field in self._server_fields.items()
+        }
+        self._server_values: dict[str, dict[str, str]] = {
+            self.mode.value(): self._read_server_fields()
+        }
+        self._server_mode = self.mode.value()
+        self._server_generation = 0
+        self._server_loading = False
+
+        # 本机与远端各占固定几行，切换时只显示对应的一侧。所有行共用同一张
+        # 网格：分两个页面各自布局时标签列各算各的宽度，远端输入框会和下面
+        # 的备份/监听地址错位。
+        self._local_rows: list[QWidget] = []
+        self._ssh_rows: list[QWidget] = []
+        rows: list[tuple[list[QWidget], str, QWidget]] = [
+            (
+                self._local_rows,
+                "二进制目录",
+                self._browse_row(self.binary, "二进制目录")[0],
+            ),
+            (
+                self._local_rows,
+                "数据目录",
+                self._browse_row(self.data_dir, "数据目录")[0],
+            ),
+            (self._ssh_rows, "SSH 主机", self.host),
+            (self._ssh_rows, "远端二进制目录", self.remote_binary),
+            (self._ssh_rows, "远端数据目录", self.remote_data),
+            ([], "备份地址", self.backup_row),
+            ([], "监听地址", self.listen),
+            ([], "Public URL", self.public_url),
+            ([], "API 地址", self.api_origin),
+        ]
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 6, 0, 0)
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(12)
+        grid.setColumnStretch(1, 1)
+        mode_label = widgets.label("连接方式", 12, 500)
+        grid.addWidget(mode_label, 0, 0)
+        grid.addWidget(self.mode, 0, 1)
+        captions = [mode_label]
+        for index, (bucket, caption, editor) in enumerate(rows, start=1):
+            caption_label = widgets.label(caption, 12, 500)
+            grid.addWidget(caption_label, index, 0)
+            grid.addWidget(editor, index, 1)
+            captions.append(caption_label)
+            bucket.extend((caption_label, editor))
+
+        # 标签列统一成最宽的一条：两套行轮流显示，不固定的话切换连接方式
+        # 时整列输入框会左右错开。
+        width = max(label.sizeHint().width() for label in captions) + 2
+        for label in captions:
+            label.setFixedWidth(width)
 
         self._root.addLayout(grid)
         self._root.addSpacing(4)
+        self.server_hint = widgets.label("", 12, 400, "muted")
+        self.server_hint.setWordWrap(True)
+        self.server_hint.hide()
+        self._root.addWidget(self.server_hint)
         self._root.addWidget(self._error_label())
         self._root.addStretch(1)
 
@@ -541,6 +609,197 @@ class SettingsDialog(BaseDialog):
         save.clicked.connect(self._ok)
         row.addWidget(save)
         self._root.addLayout(row)
+        for editor in (
+            self.binary,
+            self.data_dir,
+            self.host,
+            self.remote_binary,
+            self.remote_data,
+        ):
+            editor.edit.editingFinished.connect(self._path_edited)
+        self._sync_mode()
+        self._load_server_values()
+
+    def _browse_row(
+        self, editor: widgets.Field, caption: str
+    ) -> tuple[QWidget, widgets.ActionButton]:
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(editor, 1)
+        pick = widgets.button("浏览", "secondary", height=38, small=True)
+        pick.setMinimumWidth(64)
+        pick.clicked.connect(
+            lambda _checked=False, editor=editor, caption=caption: self._pick(
+                caption, editor
+            )
+        )
+        row.addWidget(pick)
+        return holder, pick
+
+    def _mode_changed(self, _value: str) -> None:
+        self._stash_server_values()
+        self._sync_mode()
+        self._load_server_values()
+
+    def _sync_mode(self) -> None:
+        remote = self.mode.value() == "ssh"
+        for widget in self._local_rows:
+            widget.setVisible(not remote)
+        for widget in self._ssh_rows:
+            widget.setVisible(remote)
+        # 远端路径不能用本机文件对话框选。
+        self.backup_pick.setVisible(not remote)
+        self._error.hide()
+        self._fit_height()
+
+    # ---- 每台主机自己的服务器配置 ---------------------------------------
+
+    def _read_server_fields(self) -> dict[str, str]:
+        return {
+            key: field.text().strip()
+            for key, field in self._server_fields.items()
+        }
+
+    def _write_server_fields(self, values: dict[str, str]) -> None:
+        for key, field in self._server_fields.items():
+            field.setText(values.get(key, ""))
+
+    def _stash_server_values(self) -> None:
+        """把正在显示的值记到它所属的模式下，切走再切回来时不丢。"""
+        if self._server_loading:
+            return
+        self._server_values[self._server_mode] = self._read_server_fields()
+
+    def _load_server_values(self) -> None:
+        mode = self.mode.value()
+        self._server_mode = mode
+        self._error.hide()
+        cached = self._server_values.get(mode)
+        if cached is not None:
+            self._server_loading = False
+            self._write_server_fields(cached)
+            self._set_server_editable(mode == self._current_connection)
+            self._update_server_hint(mode)
+            return
+        if self.server_lookup is None:
+            # 没有读取能力时宁可留空，也不要把当前主机的值冒充成另一台的。
+            self._server_loading = False
+            self._write_server_fields({})
+            self._set_server_editable(mode == self._current_connection)
+            self._update_server_hint(mode)
+            return
+        self._server_loading = True
+        self._server_generation += 1
+        self._set_server_editable(False)
+        self._write_server_fields({})
+        for field in self._server_fields.values():
+            field.edit.setPlaceholderText("正在读取该主机的 config.json…")
+        self._update_server_hint(mode)
+        self._fit_height()
+        self.server_lookup(self, mode, self._target_values(mode), self._server_generation)
+
+    def _target_values(self, mode: str) -> dict[str, str]:
+        if mode == "local":
+            return {
+                "binary_dir": self.binary.text().strip(),
+                "data_dir": self.data_dir.text().strip(),
+            }
+        return {
+            "host": self.host.text().strip(),
+            "binary_dir": self.remote_binary.text().strip(),
+            "data_dir": self.remote_data.text().strip(),
+        }
+
+    def _set_server_editable(self, editable: bool) -> None:
+        for field in self._server_fields.values():
+            field.setEnabled(editable)
+
+    def _server_placeholder(self, mode: str) -> str:
+        if mode == "ssh":
+            return "留空表示远端数据目录下的 backups/"
+        return self._server_placeholders.get("backup_dir", "")
+
+    def _update_server_hint(self, mode: str) -> None:
+        """告诉用户这几项属于哪台主机、为什么不能改。"""
+        if self._server_loading:
+            self._hint(f"正在读取{self._host_label(mode)}的 config.json…")
+            return
+        if mode != self._current_connection:
+            self._hint(
+                f"以上四项来自{self._host_label(mode)}的 config.json。"
+                "点“保存”会切换连接，切换之后才能修改。"
+            )
+            return
+        self._hint("")
+
+    def _host_label(self, mode: str) -> str:
+        if mode == "local":
+            return "本机"
+        host = self.host.text().strip()
+        return f" SSH 主机 {host} " if host else " SSH 主机 "
+
+    def _hint(self, text: str) -> None:
+        if text:
+            self.server_hint.setText(text)
+            self.server_hint.show()
+        else:
+            self.server_hint.hide()
+        self._fit_height()
+
+    def _fail_server(self, mode: str, message: str) -> None:
+        self._server_loading = False
+        self._write_server_fields({})
+        self._set_server_editable(False)
+        for field in self._server_fields.values():
+            field.edit.setPlaceholderText("未读取到该主机的配置")
+        self._hint(f"读取{self._host_label(mode)}的 config.json 失败：{message}")
+        self._fit_height()
+
+    def apply_server(
+        self,
+        connection: str,
+        generation: int,
+        values: dict[str, str] | None,
+        error: str = "",
+    ) -> None:
+        """读取完成（或失败）后回填；只接受当前模式和最新一次请求。"""
+        if generation != self._server_generation or connection != self.mode.value():
+            return
+        if values is None:
+            self._fail_server(connection, error or "无法读取 config.json")
+            return
+        for key, field in self._server_fields.items():
+            field.edit.setPlaceholderText(self._server_placeholders[key])
+        self._server_loading = False
+        self._server_values[connection] = dict(values)
+        self._server_mode = connection
+        self._write_server_fields(self._server_values[connection])
+        self._set_server_editable(connection == self._current_connection)
+        self._update_server_hint(connection)
+
+    def _path_edited(self) -> None:
+        """主机或路径改了，缓存里的服务器配置就不属于这个目标了。"""
+        mode = self.mode.value()
+        if mode == self._current_connection or self._server_loading:
+            return
+        self._server_values.pop(mode, None)
+        self._load_server_values()
+
+    def _fit_height(self) -> None:
+        """按当前显示的行重新定高。
+
+        两套行高度不同，写死高度会把远端那三行输入框压到互相重叠；这里量
+        当前内容再固定，隐藏的行不占位，切回本机也不会留一大片空白。
+        """
+        self._root.activate()
+        needed = max(
+            self._root.totalSizeHint().height(),
+            self._root.totalMinimumSize().height(),
+            520,
+        )
+        self.setFixedHeight(needed)
 
     def _pick(self, caption: str, editor: widgets.Field) -> None:
         chosen = _browse(self, f"选择{caption}", editor.text())
@@ -548,35 +807,73 @@ class SettingsDialog(BaseDialog):
             editor.setText(chosen)
 
     def _restore_defaults(self) -> None:
-        self.binary.setText(self.defaults["binary"])
-        self.data_dir.setText(self.defaults["data_dir"])
-        self.backup_dir.setText(self.defaults["backup_dir"])
+        if self.mode.value() != self._current_connection:
+            self._hint("这些配置属于另一台主机，切换过去之后才能恢复默认。")
+            return
+        if self.mode.value() == "ssh":
+            self.remote_binary.clear()
+            self.remote_data.clear()
+            # 远端备份地址留空，让 CLI 用数据目录下的 backups/。
+            self.backup_dir.clear()
+        else:
+            self.binary.setText(self.defaults["binary"])
+            self.data_dir.setText(self.defaults["data_dir"])
+            self.backup_dir.setText(self.defaults["backup_dir"])
         self.listen.setText(self.defaults["listen"])
         self.public_url.setText(self.defaults["public_url"])
         self.api_origin.setText(self.defaults["api_origin"])
         self._error.hide()
 
     def _ok(self) -> None:
-        binary_dir = self.binary.text().strip()
-        data_dir = self.data_dir.text().strip()
+        if self._server_loading:
+            self._show_error("正在读取目标主机的配置，请稍候再保存。")
+            return
+        mode = self.mode.value()
+        local_binary = self.binary.text().strip()
+        local_data = self.data_dir.text().strip()
+        host = self.host.text().strip()
+        remote_binary = self.remote_binary.text().strip()
+        remote_data = self.remote_data.text().strip()
         backup_dir = self.backup_dir.text().strip()
         listen = self.listen.text().strip()
         api_origin = self.api_origin.text().strip()
-        if not binary_dir:
-            self._show_error("请选择二进制目录")
-            return
-        if not cli.binary_in(binary_dir).is_file():
-            self._show_error(f"目录里没有 {cli.binary_name()}")
-            return
-        if not data_dir:
-            self._show_error("数据目录不能为空")
-            return
+
+        if mode == "local":
+            if not local_binary:
+                self._show_error("请选择二进制目录")
+                return
+            if not cli.binary_in(local_binary).is_file():
+                self._show_error(f"目录里没有 {cli.binary_name()}")
+                return
+            if not local_data:
+                self._show_error("数据目录不能为空")
+                return
+        else:
+            if not host:
+                self._show_error("请填写 SSH 主机")
+                return
+            if not remote_binary:
+                self._show_error("请填写远端二进制目录")
+                return
+            if not remote_binary.startswith("/"):
+                self._show_error("远端二进制目录必须是绝对路径")
+                return
+            if remote_data and not remote_data.startswith("/"):
+                self._show_error("远端数据目录必须是绝对路径，留空使用远端默认值")
+                return
+
         if not listen:
             self._show_error("监听地址不能为空")
             return
-        if backup_dir and not Path(backup_dir).expanduser().is_absolute():
-            self._show_error("备份地址必须是绝对路径，留空表示默认目录")
-            return
+        if backup_dir:
+            absolute = (
+                posixpath.isabs(backup_dir)
+                if mode == "ssh"
+                else Path(backup_dir).expanduser().is_absolute()
+            )
+            if not absolute:
+                self._show_error("备份地址必须是绝对路径，留空表示默认目录")
+                return
         public_url = self.public_url.text().strip()
         if public_url and not _http_url(public_url):
             self._show_error("Public URL 必须以 http:// 或 https:// 开头")
@@ -584,14 +881,21 @@ class SettingsDialog(BaseDialog):
         if api_origin and not _http_url(api_origin):
             self._show_error("API 地址必须以 http:// 或 https:// 开头")
             return
-        old_data = Path(self._initial_data_dir).expanduser()
-        new_data = Path(data_dir).expanduser()
-        if backup_dir == str(old_data / "backups") and new_data != old_data:
-            # 数据目录换了而备份地址还是旧默认值：清空，让它跟随新数据目录。
-            backup_dir = ""
+
+        if mode == "local":
+            old_data = Path(self._initial_local.get("data_dir", "")).expanduser()
+            new_data = Path(local_data).expanduser()
+            if backup_dir == str(old_data / "backups") and new_data != old_data:
+                # 数据目录换了而备份地址还是旧默认值：清空，让它跟随新数据目录。
+                backup_dir = ""
         self.value = {
-            "binary": binary_dir,
-            "data_dir": data_dir,
+            "connection": mode,
+            "local": {"binary_dir": local_binary, "data_dir": local_data},
+            "ssh": {
+                "host": host,
+                "binary_dir": remote_binary,
+                "data_dir": remote_data,
+            },
             "backup_dir": backup_dir,
             "listen": listen,
             "public_url": public_url,
@@ -614,6 +918,7 @@ class InstallServiceDialog(BaseDialog):
         data_dir: str,
         linger: bool,
         username: str,
+        host: str = "",
         installed: bool = False,
         enabled: bool = False,
         active: bool = False,
@@ -623,6 +928,7 @@ class InstallServiceDialog(BaseDialog):
         self.binary = binary
         self.data_dir = data_dir
         self.username = username or "<user>"
+        self.host = host.strip()
         self.scope = "user"
         self.installed = installed
         self.linger = linger
@@ -700,7 +1006,9 @@ class InstallServiceDialog(BaseDialog):
         grid.addWidget(self.install_command_holder, self._row, 1)
         self._row += 1
 
-        self.help_command_text = service_plan.service_help_command(self.binary)
+        self.help_command_text = service_plan.service_help_command(
+            self.binary, host=self.host
+        )
         self.help_command_field = widgets.DisplayField(self.help_command_text)
         self.help_command_button = self._command_copy_button(
             "帮助", lambda _checked=False: self._copy(
@@ -749,7 +1057,7 @@ class InstallServiceDialog(BaseDialog):
 
     def _linger_command(self) -> str:
         return service_plan.linger_command(
-            self.username, enable=not self.linger
+            self.username, enable=not self.linger, host=self.host
         )
 
     def _primary_label(self) -> str:
@@ -764,6 +1072,7 @@ class InstallServiceDialog(BaseDialog):
             self.data_dir,
             run_as=self.username,
             enable=self._enable_value(),
+            host=self.host,
         )
 
     def _update_install_command(self, *_args) -> None:

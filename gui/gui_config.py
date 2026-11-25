@@ -1,15 +1,17 @@
 """GUI 本地设置（config.gui.json）。
 
 服务端配置（监听地址、Public URL、API 地址、备份地址）由 CLI 写入数据目录的
-config.json；这里只保存 GUI 自己的连接方式和路径。数据目录本身不能存在数据目录
-里的配置中，所以必须单独放在用户配置目录。
+config.json；这里只保存 GUI 自己的连接方式、路径和上次登录的用户名。数据目录
+本身不能存在数据目录里的配置中，所以必须单独放在用户配置目录。
 
-v2 结构：
+v3 结构：
 
     {
-      "version": 2,
-      "connection": "local",
-      "local": {
+      "version": 3,
+      "connection": "local" | "ssh",
+      "local": {"binary_dir": "...", "data_dir": "...", "username": "..."},
+      "ssh": {
+        "host": "...",
         "binary_dir": "...",
         "data_dir": "...",
         "username": "..."
@@ -18,7 +20,7 @@ v2 结构：
 
 v1 的顶层 binary/data_dir/backup_dir/username 会被迁移到 local；backup_dir 不再
 属于 GUI 配置，load 时单独返回，由界面通过 `config set backup_dir` 写进
-config.json。ssh 等未来字段保存在原始 JSON 里，save 时原样保留。
+config.json。v2 只有 local 段，迁移时补一个空的 ssh 段。未知字段原样保留。
 """
 
 from __future__ import annotations
@@ -30,8 +32,32 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DEFAULT_CONNECTION = "local"
+CONNECTIONS = ("local", "ssh")
+
+
+@dataclass(frozen=True)
+class LocalConfig:
+    """本机连接的路径和上次登录用户名。"""
+
+    binary_dir: str = ""
+    data_dir: str = ""
+    username: str = ""
+
+
+@dataclass(frozen=True)
+class SshConfig:
+    """SSH 连接的远端路径和上次登录用户名。
+
+    host 使用用户自己的 ssh_config 别名或 `user@host`；GUI 不保存密码。
+    binary_dir 是远端绝对目录（必填），data_dir 留空表示用远端 CLI 默认值。
+    """
+
+    host: str = ""
+    binary_dir: str = ""
+    data_dir: str = ""
+    username: str = ""
 
 
 @dataclass(frozen=True)
@@ -40,17 +66,26 @@ class Config:
 
     version: int = SCHEMA_VERSION
     connection: str = DEFAULT_CONNECTION
-    binary_dir: str = ""
-    data_dir: str = ""
-    username: str = ""
+    local: LocalConfig = LocalConfig()
+    ssh: SshConfig = SshConfig()
     # v1 迁移时带出的备份地址；界面写进 config.json 后清空。
     legacy_backup_dir: str = ""
     migrated: bool = False
 
     @property
     def empty(self) -> bool:
-        """没有可用的本地配置（新安装或模板为空）。"""
-        return not (self.binary_dir or self.data_dir or self.username)
+        """没有可用的配置（新安装或模板为空）。"""
+        local = self.local
+        return not (
+            local.binary_dir
+            or local.data_dir
+            or local.username
+            or self.ssh.host
+        )
+
+    @property
+    def active(self) -> LocalConfig | SshConfig:
+        return self.ssh if self.connection == "ssh" else self.local
 
 
 def config_dir() -> Path:
@@ -98,6 +133,11 @@ def _read_raw(path: Path) -> dict[str, object] | None:
     return raw if isinstance(raw, dict) else None
 
 
+def _section(raw: dict[str, object], key: str) -> dict[str, object]:
+    value = raw.get(key)
+    return value if isinstance(value, dict) else {}
+
+
 def load(path: str | Path) -> Config:
     """读取并归一化 GUI 配置；缺失、损坏或类型不对时返回空配置。"""
     path = Path(path).expanduser()
@@ -107,50 +147,82 @@ def load(path: str | Path) -> Config:
 
     version = raw.get("version")
     connection = _text(raw.get("connection")) or DEFAULT_CONNECTION
-    local = raw.get("local")
-    if isinstance(local, dict):
-        return Config(
-            version=SCHEMA_VERSION,
-            connection=connection,
-            binary_dir=_text(local.get("binary_dir")),
-            data_dir=_text(local.get("data_dir")),
-            username=_text(local.get("username")),
-            migrated=version != SCHEMA_VERSION,
-        )
+    if connection not in CONNECTIONS:
+        connection = DEFAULT_CONNECTION
 
-    # v1：顶层 binary/data_dir/backup_dir/username。
+    local_raw = raw.get("local")
+    legacy = ""
+    if isinstance(local_raw, dict):
+        local = LocalConfig(
+            binary_dir=_text(local_raw.get("binary_dir")),
+            data_dir=_text(local_raw.get("data_dir")),
+            username=_text(local_raw.get("username")),
+        )
+    else:
+        # v1：顶层 binary/data_dir/backup_dir/username。
+        local = LocalConfig(
+            binary_dir=_text(raw.get("binary")),
+            data_dir=_text(raw.get("data_dir")),
+            username=_text(raw.get("username")),
+        )
+        legacy = _text(raw.get("backup_dir"))
+
+    ssh_raw = _section(raw, "ssh")
+    ssh = SshConfig(
+        host=_text(ssh_raw.get("host")),
+        binary_dir=_text(ssh_raw.get("binary_dir")),
+        data_dir=_text(ssh_raw.get("data_dir")),
+        username=_text(ssh_raw.get("username")),
+    )
+
     return Config(
         version=SCHEMA_VERSION,
-        connection=DEFAULT_CONNECTION,
-        binary_dir=_text(raw.get("binary")),
-        data_dir=_text(raw.get("data_dir")),
-        username=_text(raw.get("username")),
-        legacy_backup_dir=_text(raw.get("backup_dir")),
-        migrated=True,
+        connection=connection,
+        local=local,
+        ssh=ssh,
+        legacy_backup_dir=legacy,
+        migrated=version != SCHEMA_VERSION,
     )
 
 
 def save(path: str | Path, config: Config) -> None:
-    """原子写入 v2 配置，权限保持 0600；保留未知字段和未来的连接段。"""
+    """原子写入 v3 配置，权限保持 0600；保留未知字段。"""
     path = Path(path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
 
     existing = _read_raw(path) or {}
     existing["version"] = SCHEMA_VERSION
-    existing["connection"] = config.connection.strip() or DEFAULT_CONNECTION
+    existing["connection"] = (
+        config.connection if config.connection in CONNECTIONS else DEFAULT_CONNECTION
+    )
+
     local = existing.get("local")
     if not isinstance(local, dict):
         local = {}
     local.update(
         {
-            "binary_dir": config.binary_dir.strip(),
-            "data_dir": config.data_dir.strip(),
-            "username": config.username.strip(),
+            "binary_dir": config.local.binary_dir.strip(),
+            "data_dir": config.local.data_dir.strip(),
+            "username": config.local.username.strip(),
         }
     )
     existing["local"] = local
     # service_scope 是已废弃的卡片范围缓存；写入时顺手清掉。
     local.pop("service_scope", None)
+
+    ssh = existing.get("ssh")
+    if not isinstance(ssh, dict):
+        ssh = {}
+    ssh.update(
+        {
+            "host": config.ssh.host.strip(),
+            "binary_dir": config.ssh.binary_dir.strip(),
+            "data_dir": config.ssh.data_dir.strip(),
+            "username": config.ssh.username.strip(),
+        }
+    )
+    existing["ssh"] = ssh
+
     # 迁移完成后不再保留 v1 顶层字段；backup_dir 归 config.json。
     for key in ("binary", "data_dir", "backup_dir", "username"):
         existing.pop(key, None)

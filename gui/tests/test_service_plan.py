@@ -153,5 +153,33 @@ class SystemCommandsTest(unittest.TestCase):
             "'/opt/chat data/chat-deepseek' service --help",
         )
 
+    def test_remote_install_command_runs_over_ssh(self) -> None:
+        command = service_plan.system_install_command(
+            "/opt/chat-deepseek",
+            "/srv/data",
+            run_as="gx",
+            enable=True,
+            host="nas",
+        )
+        self.assertEqual(
+            command,
+            "ssh -t nas 'sudo /opt/chat-deepseek service install "
+            "--system --run-as gx --enable --data-dir /srv/data'",
+        )
+
+    def test_remote_help_and_linger_commands(self) -> None:
+        self.assertEqual(
+            service_plan.service_help_command("/opt/chat-deepseek", host="nas"),
+            "ssh nas '/opt/chat-deepseek service --help'",
+        )
+        self.assertEqual(
+            service_plan.linger_command("gx", host="nas"),
+            "ssh -t nas 'loginctl enable-linger gx'",
+        )
+        self.assertEqual(
+            service_plan.linger_command("gx", enable=False, host="nas"),
+            "ssh -t nas 'loginctl disable-linger gx'",
+        )
+
 if __name__ == "__main__":
     unittest.main()

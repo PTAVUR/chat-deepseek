@@ -85,19 +85,21 @@ def run_command(
 
 
 class ServerProcess:
-    """持有 serve 子进程，把 stdout/stderr 按行回调给界面。"""
+    """持有一个长进程（serve 或 ssh + serve），把输出按行回调给界面。"""
 
     def __init__(
         self,
-        binary: str,
-        args: Sequence[str],
+        command: Sequence[str],
         on_line: Callable[[str], None],
         on_exit: Callable[[int], None],
+        marker: str | None = None,
     ) -> None:
-        self.binary = binary
-        self.args = tuple(args)
+        self.command = tuple(command)
         self.on_line = on_line
         self.on_exit = on_exit
+        # 以 marker 开头的行是进程自报的 PID（远端 serve 用），不交给界面。
+        self.marker = marker
+        self.marker_pid: int | None = None
         self.process: subprocess.Popen[str] | None = None
         self._thread: threading.Thread | None = None
 
@@ -109,6 +111,7 @@ class ServerProcess:
         if self.running:
             return
         kwargs: dict[str, object] = {
+            "stdin": subprocess.DEVNULL,
             "stdout": subprocess.PIPE,
             "stderr": subprocess.STDOUT,
             "text": True,
@@ -119,7 +122,7 @@ class ServerProcess:
         }
         if os.name == "nt":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        self.process = subprocess.Popen([self.binary, *self.args], **kwargs)
+        self.process = subprocess.Popen(list(self.command), **kwargs)
         self._thread = threading.Thread(target=self._pump, daemon=True)
         self._thread.start()
 
@@ -129,7 +132,13 @@ class ServerProcess:
             return
         try:
             for line in process.stdout:
-                self.on_line(line.rstrip("\n"))
+                line = line.rstrip("\n")
+                if self.marker and line.startswith(self.marker):
+                    value = line[len(self.marker) :].strip()
+                    if value.isdigit():
+                        self.marker_pid = int(value)
+                    continue
+                self.on_line(line)
         finally:
             code = process.wait()
             self.on_exit(code)

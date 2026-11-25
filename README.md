@@ -63,6 +63,8 @@ CGO_ENABLED=0 go build -o chat-deepseek ./cmd/chat-deepseek
 
 `gui/app.py` 是 Python + PySide6（Qt 6）管理界面：按钮只负责拼出 `chat-deepseek` 子命令，输出由 `gui/parsing.py` 解析成账户列表、服务状态和提示；已知失败会翻译成可操作说明，识别不了才显示原始输出。账户、会话、备份逻辑仍全部在 `chat-deepseek` 里，不另写一套。它覆盖 `setup`、`serve`、`backup`、`user ...`、`login` / `logout` / `whoami`、`version` 和 `help`，并通过 `info` / `config set` / `service` 显示服务端配置、保存设置和管理 systemd 服务。聊天仍由 `serve` 提供的现有 Web UI 完成。
 
+设置里的“连接方式”可以选择本机或 SSH 远程。SSH 模式使用系统 `ssh`，只支持密钥/agent 认证（先在终端执行一次 `ssh <主机>` 确认可以直接登录），并在 GUI 启动后保持一个 `ssh -T <主机> 'exec /bin/sh'` 常驻通道，所有 CLI 命令都在这个 shell 里执行；CLI 的登录态按 shell 保存，所以登录一次后其余管理命令共享同一个登录态。远端二进制目录必填，远端数据目录留空表示用远端 CLI 默认值；GUI 不做端口映射，打开页面需要远端配置 Public URL，也不提供 SFTP。
+
 依赖装在 `gui/.venv`（已 gitignore）。在仓库根目录：
 
 ```sh
@@ -73,11 +75,13 @@ gui/.venv/bin/python gui/app.py
 
 Windows 用 `gui\.venv\Scripts\python gui\app.py`；更完整的命令见 [gui/README.md](gui/README.md)。需要 Python 3.10+ 和 `requirements.txt` 里的 PySide6。Linux 还缺 Qt 的 xcb 运行库时，Debian/Ubuntu 可安装 `libxcb-cursor0`、`libxkbcommon-x11-0`、`libgl1`、`libegl1` 等系统包。
 
-`gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。GUI 本地配置是平台用户配置目录的 `config.gui.json`（v2，旧版会自动迁移）：Linux 是 `~/.config/chat-deepseek/`，macOS 是 `~/Library/Application Support/chat-deepseek/`，Windows 是 `%APPDATA%\chat-deepseek\`；里面只保存二进制目录、数据目录和上次登录的用户名。监听地址、Public URL、API 地址和备份地址通过 `chat-deepseek config set` 写入数据目录的 `config.json`，`serve` 启动时直接读取。左下角的“恢复默认”在 Windows/Linux 回到二进制同级 `data/`、`data/backups/`，在 macOS 回到 `~/Library/Application Support/chat-deepseek/data/`；监听地址和 API 地址回到 `127.0.0.1:8090` 和官方地址。数据卡片可以立即备份、查看备份记录并从记录中恢复；恢复前必须先停止服务。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里；上次登录的用户名记在 `config.gui.json`，不保存密码。
+`gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。GUI 本地配置是平台用户配置目录的 `config.gui.json`（v3，旧版会自动迁移）：Linux 是 `~/.config/chat-deepseek/`，macOS 是 `~/Library/Application Support/chat-deepseek/`，Windows 是 `%APPDATA%\chat-deepseek\`；里面保存连接方式、`local` 与 `ssh` 两段路径和上次登录的用户名。监听地址、Public URL、API 地址和备份地址通过 `chat-deepseek config set` 写入当前目标数据目录的 `config.json`，`serve` 启动时直接读取。左下角的“恢复默认”在 Windows/Linux 回到二进制同级 `data/`、`data/backups/`，在 macOS 回到 `~/Library/Application Support/chat-deepseek/data/`；监听地址和 API 地址回到 `127.0.0.1:8090` 和官方地址。数据卡片可以立即备份、查看备份记录并从记录中恢复；恢复前必须先停止服务。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里；上次登录的用户名记在 `config.gui.json`，不保存密码。
 
 Linux + systemd 时，服务卡片显示 systemd 服务的安装位置（用户目录）、运行、开机自启和 linger 状态，可以启动、停止、重启、安装、更新和卸载。安装对话框用下拉框选择“用户目录”或“系统目录”：用户目录直接安装，不需要 root；系统目录需要 root，GUI 不执行安装，只给出“安装命令”和“CLI 帮助”两条单行字段，各自带复制按钮；单行显示不下时中间省略，复制的是完整命令。安装后在终端运行 CLI 帮助查看启动、停止、重启和卸载命令。用户级安装本身只写 unit 并 `daemon-reload`；未开启 linger 时注销后服务会停止，对话框按当前状态提供 `loginctl enable-linger` 或 `loginctl disable-linger` 命令的复制按钮；“更新服务”按当前配置重写 unit（`--force`）并重启服务，可以同时调整开机自启。未安装服务时“启动服务”走前台会话模式，关闭窗口会停止该进程；已安装的 systemd 服务不会被关闭窗口停止。Windows/macOS 没有 systemd，继续使用会话模式，常驻交给任务计划程序/NSSM 或 LaunchAgent。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止会话进程是强制结束；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
 
-GUI 使用 CLI 的登录态：不登录也能启停、安装、更新服务和改设置，账户区显示锁图标，备份区提示登录后查看；点击登录、刷新、添加或任一备份按钮会弹出登录框。只有 Admin 和 Owner 能登录，按钮会按当前身份置灰不可执行的操作；登录 15 分钟后过期，关闭 GUI 会自动退出登录。
+SSH 模式下列表和服务命令都在远端执行，systemd 状态来自远端 `info`。远端用户级 systemd 服务同样需要 linger：SSH 通道断开后没有 linger 的 user manager 会被 logind 停掉，服务也跟着停止；常驻场景应开启 linger，或在远端安装系统级 unit。远端前台 `serve` 会随 GUI 关闭或 SSH 断开结束，点“停止服务”会按远端 PID 结束进程并释放端口。备份地址、监听地址、Public URL 和 API 地址都按当前主机自己的 `config.json` 读取，切换主机不会沿用上一台的值。远端路径不能在本机浏览或 `scp` 下载备份；GUI 只在远端配置了 Public URL 时才能打开页面。
+
+GUI 使用 CLI 的登录态：不登录也能启停、安装、更新服务和改设置，账户区显示锁图标，备份区提示登录后查看；点击登录、刷新、添加或任一备份按钮会弹出登录框。只有 Admin 和 Owner 能登录，按钮会按当前身份置灰不可执行的操作；登录 15 分钟后过期，关闭 GUI 会自动退出登录。SSH 模式下登录态绑定常驻通道，关闭窗口会先 `logout` 再断开；切换连接方式、主机或数据目录后需要重新登录。
 
 ## 发布流水线
 

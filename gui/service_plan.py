@@ -66,9 +66,14 @@ def system_install_command(
     *,
     run_as: str,
     enable: bool,
+    host: str = "",
 ) -> str:
-    """系统级安装命令；需要 root，GUI 只负责让用户复制。"""
-    return shlex.join(
+    """系统级安装命令；需要 root，GUI 只负责让用户复制。
+
+    host 非空表示管理的是远端服务：命令要在本机终端里通过 ssh 执行，带 -t
+    是为了让 sudo 能弹出密码提示。
+    """
+    local = shlex.join(
         [
             "sudo",
             binary,
@@ -77,13 +82,22 @@ def system_install_command(
             ),
         ]
     )
+    if not host:
+        return local
+    return shlex.join(["ssh", "-t", host, local])
 
 
-def service_help_command(binary: str) -> str:
+def service_help_command(binary: str, host: str = "") -> str:
     """安装后查看启动、停止、重启和卸载命令。"""
-    return shlex.join([binary, "service", "--help"])
+    local = shlex.join([binary, "service", "--help"])
+    if not host:
+        return local
+    return shlex.join(["ssh", host, local])
 
 
-def linger_command(user: str, *, enable: bool = True) -> str:
+def linger_command(user: str, *, enable: bool = True, host: str = "") -> str:
     action = "enable-linger" if enable else "disable-linger"
-    return f"loginctl {action} {shlex.quote(user)}"
+    local = f"loginctl {action} {shlex.quote(user)}"
+    if not host:
+        return local
+    return shlex.join(["ssh", "-t", host, local])

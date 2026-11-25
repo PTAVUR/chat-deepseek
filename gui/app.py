@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import queue
+import shlex
 import sys
 import threading
 import time
@@ -54,6 +55,7 @@ import gui_config
 import parsing
 import server_config
 import service_plan
+import ssh_session
 import theme
 import widgets
 
@@ -77,7 +79,11 @@ class MainWindow(QMainWindow):
                 if not candidate.empty:
                     saved = candidate
                     break
-        self.connection = saved.connection
+        self.connection = (
+            saved.connection
+            if saved.connection in gui_config.CONNECTIONS
+            else gui_config.DEFAULT_CONNECTION
+        )
         self.legacy_backup_dir = saved.legacy_backup_dir
         self.config_migration_error: str | None = None
         if saved.migrated:
@@ -86,34 +92,57 @@ class MainWindow(QMainWindow):
             except OSError as exc:
                 self.config_migration_error = str(exc)
 
-        initial = dict(self.defaults)
-        if saved.binary_dir:
-            initial["binary"] = saved.binary_dir
-        if saved.data_dir:
-            initial["data_dir"] = saved.data_dir
-        else:
-            initial["data_dir"] = str(
-                server_config.default_data_dir(initial["binary"])
-            )
-        self.last_username = saved.username
-        saved_binary = Path(initial["binary"]).expanduser()
-        if not saved_binary.is_file() and not cli.binary_in(saved_binary).is_file():
-            initial["binary"] = self.defaults["binary"]
-            if not saved.data_dir:
-                initial["data_dir"] = str(
-                    server_config.default_data_dir(initial["binary"])
-                )
+        # 本机和 SSH 各存一份路径，切换连接时不用重新输入。
+        self.local_profile = {
+            "binary_dir": saved.local.binary_dir,
+            "data_dir": saved.local.data_dir,
+            "username": saved.local.username,
+        }
+        self.ssh_profile = {
+            "host": saved.ssh.host,
+            "binary_dir": saved.ssh.binary_dir,
+            "data_dir": saved.ssh.data_dir,
+            "username": saved.ssh.username,
+        }
+        # 远端主机被清空时退回本机，避免一启动就报“没有配置 SSH 主机”。
+        if self.connection == "ssh" and not self.ssh_profile["host"]:
+            self.connection = gui_config.DEFAULT_CONNECTION
 
+        local_binary = self.local_profile["binary_dir"] or self.defaults["binary"]
+        if not Path(local_binary).expanduser().is_file() and not cli.binary_in(
+            local_binary
+        ).is_file():
+            local_binary = self.defaults["binary"]
+        local_data = self.local_profile["data_dir"] or str(
+            server_config.default_data_dir(local_binary)
+        )
+        self.local_profile["binary_dir"] = local_binary
+        self.local_profile["data_dir"] = local_data
         # 服务端配置统一由 `chat-deepseek info` 读取；这里先填默认值。
-        initial["backup_dir"] = server_config.default_backup_dir(initial["data_dir"])
-        self.defaults = server_config.defaults(Path(initial["binary"]))
+        backup_default = server_config.default_backup_dir(local_data)
+        self.defaults = server_config.defaults(Path(local_binary))
 
-        self.binary_dir = initial["binary"]
-        self.data_dir = initial["data_dir"]
-        self.backup_dir = initial["backup_dir"]
-        self.listen = initial["listen"]
-        self.public_url = initial["public_url"]
-        self.api_origin = initial["api_origin"]
+        self.binary_dir = (
+            self.ssh_profile["binary_dir"]
+            if self.remote
+            else self.local_profile["binary_dir"]
+        )
+        self.data_dir = (
+            self.ssh_profile["data_dir"]
+            if self.remote
+            else self.local_profile["data_dir"]
+        )
+        self.last_username = (
+            self.ssh_profile["username"]
+            if self.remote
+            else self.local_profile["username"]
+        )
+        # 备份地址属于目标主机自己的 config.json（由 info 读回）。远端在 info
+        # 返回前先留空，不能拿 GUI 所在机器的默认路径顶上。
+        self.backup_dir = "" if self.remote else backup_default
+        self.listen = self.defaults["listen"]
+        self.public_url = self.defaults["public_url"]
+        self.api_origin = self.defaults["api_origin"]
         self.info: parsing.Info | None = None
         self.info_generation = 0
         self.service_supported = False
@@ -129,6 +158,8 @@ class MainWindow(QMainWindow):
         self.data_ready = False
         self.session_generation = 0
         self.server: cli.ServerProcess | None = None
+        self.ssh: ssh_session.SshSession | None = None
+        self._ssh_lock = threading.Lock()
         self.server_url: str | None = None
         self.server_address: str | None = None
         self.server_tail: list[str] = []
@@ -141,6 +172,7 @@ class MainWindow(QMainWindow):
         self.backups: list[parsing.Backup] = []
         self.closing = False
         self.setup_button = None
+        self.settings_pending = False
         self.pending_action: Callable[[], None] | None = None
         self.inbox: queue.Queue[Callable[[], None]] = queue.Queue()
 
@@ -162,6 +194,11 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.bootstrap)
 
     # ---- 窗口骨架 -----------------------------------------------------
+
+    @property
+    def remote(self) -> bool:
+        """当前是否管理远端主机。"""
+        return self.connection == "ssh"
 
     def _make_icon(self) -> QIcon:
         pixmap = QPixmap(64, 64)
@@ -478,6 +515,9 @@ class MainWindow(QMainWindow):
     # ---- 登录态 -------------------------------------------------------
 
     def _data_ready(self) -> bool:
+        if self.remote:
+            # 远端数据目录在服务器上，本地无法 stat；以 `info` 的 initialized 为准。
+            return bool(self.info and self.info.initialized)
         try:
             return (self._data_root() / "chat.db").is_file()
         except RuntimeError:
@@ -491,9 +531,8 @@ class MainWindow(QMainWindow):
             self.gui_config_path,
             gui_config.Config(
                 connection=self.connection,
-                binary_dir=self.binary_dir,
-                data_dir=self.data_dir,
-                username=self.last_username,
+                local=gui_config.LocalConfig(**self.local_profile),
+                ssh=gui_config.SshConfig(**self.ssh_profile),
             ),
         )
 
@@ -619,6 +658,10 @@ class MainWindow(QMainWindow):
         then: Callable[[], None] | None,
     ) -> None:
         self.last_username = username
+        if self.remote:
+            self.ssh_profile["username"] = username
+        else:
+            self.local_profile["username"] = username
         try:
             self._save_gui_config()
         except OSError:
@@ -629,7 +672,7 @@ class MainWindow(QMainWindow):
         self, then: Callable[[], None] | None = None
     ) -> None:
         try:
-            binary = self._binary()
+            self._binary()
         except RuntimeError:
             return
         generation = self.session_generation
@@ -637,7 +680,7 @@ class MainWindow(QMainWindow):
 
         def work() -> None:
             try:
-                result = cli.run_command(binary, args)
+                result = self._run(args)
             except Exception as exc:  # noqa: BLE001
                 result = cli.CommandResult(tuple(args), 1, "", str(exc))
             self._post(lambda: self._apply_identity(result, generation, then))
@@ -653,6 +696,8 @@ class MainWindow(QMainWindow):
         if self.closing or generation != self.session_generation:
             return
         if not result.ok:
+            if self._ssh_failure(result):
+                return
             if result.code == 3:
                 self._reset_identity_state("登录已失效，请重新登录")
             else:
@@ -785,7 +830,7 @@ class MainWindow(QMainWindow):
             self._toast("正在执行上一条命令", error=True)
             return
         try:
-            binary = self._binary()
+            self._binary()
         except RuntimeError as exc:
             self._error("chat-deepseek", str(exc))
             return
@@ -793,7 +838,7 @@ class MainWindow(QMainWindow):
 
         def work() -> None:
             try:
-                result = cli.run_command(binary, args, stdin_text)
+                result = self._run(args, stdin_text)
             except Exception as exc:  # noqa: BLE001 - 直接呈现子进程错误
                 result = cli.CommandResult(tuple(args), 1, "", str(exc))
             self._post(lambda: self._finish(result, on_success, on_failure))
@@ -810,6 +855,8 @@ class MainWindow(QMainWindow):
             return
         self._set_busy(False)
         if not result.ok:
+            if self._binary_missing(result) or self._ssh_failure(result):
+                return
             failure = parsing.explain_failure(
                 result.stderr, result.stdout, result.args, result.code
             )
@@ -857,11 +904,17 @@ class MainWindow(QMainWindow):
         raise RuntimeError(f"目录里没有 {cli.binary_name()}：{path}")
 
     def _binary(self) -> str:
+        if self.remote:
+            return ssh_session.remote_binary(self.binary_dir)
         return self._resolve_binary(self.binary_dir)
 
     def _data_args(self) -> list[str]:
-        value = os.path.expanduser(self.data_dir.strip())
-        return ["--data-dir", value] if value else []
+        value = self.data_dir.strip()
+        if not value:
+            return []
+        if not self.remote:
+            value = os.path.expanduser(value)
+        return ["--data-dir", value]
 
     def _service_args(self, action: str) -> list[str]:
         return ["service", action]
@@ -871,22 +924,32 @@ class MainWindow(QMainWindow):
         return ["--listen", value] if value else []
 
     def _data_root(self) -> Path:
+        if self.remote:
+            raise RuntimeError("远端数据目录不在本机")
         value = self.data_dir.strip()
         if value:
             return Path(value).expanduser()
         return Path(self._binary()).parent / "data"
 
     def _update_data_summary(self) -> None:
+        if self.remote:
+            self.data_summary.setText(
+                "远端路径" if self.data_dir.strip() else "远端默认路径"
+            )
+            return
         default = Path(self.defaults["data_dir"]).expanduser()
         current = Path(self.data_dir).expanduser() if self.data_dir.strip() else default
         self.data_summary.setText("默认路径" if current == default else "自定义路径")
 
     def _page_url(self) -> str:
-        if self.server_url:
+        if self.server_url and not self.remote:
             return self.server_url
         public = self.public_url.strip()
         if public:
             return public.rstrip("/")
+        if self.remote:
+            # 远端监听地址在远端；GUI 不做端口映射，只能靠 Public URL。
+            return ""
         listen = self.listen.strip() or server_config.DEFAULT_LISTEN
         listen = listen.replace("[::]", "127.0.0.1").replace("0.0.0.0", "127.0.0.1")
         if listen.startswith(":"):
@@ -895,17 +958,108 @@ class MainWindow(QMainWindow):
             listen = "127.0.0.1:" + listen
         return "http://" + listen
 
+    # ---- 命令执行 -----------------------------------------------------
+
+    def _command_timeout(self, args: list[str]) -> float:
+        # 备份打包可能要几分钟；其余管理命令都是秒级，超时后关掉通道重连。
+        return 1800.0 if args and args[0] == "backup" else 120.0
+
+    def _ssh_connection(self) -> ssh_session.SshSession:
+        with self._ssh_lock:
+            if self.ssh is None:
+                self.ssh = ssh_session.SshSession(self.ssh_profile["host"])
+            return self.ssh
+
+    def _drop_ssh(self, wait: bool = False) -> None:
+        """丢弃常驻通道；默认后台关闭，避免主线程等命令超时。"""
+        with self._ssh_lock:
+            session = self.ssh
+            self.ssh = None
+        if session is None:
+            return
+        if wait:
+            try:
+                session.close()
+            except Exception:  # noqa: BLE001 - 关闭失败不影响界面
+                pass
+            return
+
+        def close() -> None:
+            try:
+                session.close()
+            except Exception:  # noqa: BLE001 - 关闭失败不影响界面
+                pass
+
+        threading.Thread(target=close, daemon=True).start()
+
+    def _run(
+        self,
+        args: list[str],
+        stdin_text: str | None = None,
+        *,
+        binary: str | None = None,
+    ) -> cli.CommandResult:
+        timeout = self._command_timeout(args)
+        target = binary or self._binary()
+        if self.remote:
+            return self._ssh_connection().run(
+                target, args, stdin_text, timeout
+            )
+        return cli.run_command(
+            target, args, stdin_text, timeout=timeout
+        )
+
+    def _binary_missing(self, result: cli.CommandResult) -> bool:
+        """远端路径填错时 sh 返回 127；给出比“未知错误”更直接的解释。"""
+        if not self.remote or result.code != 127:
+            return False
+        self._error(
+            "找不到 chat-deepseek",
+            f"远端没有可执行文件：{self.binary_dir}/chat-deepseek。"
+            "请在设置里检查远端二进制目录。",
+            result.stderr.strip() or None,
+        )
+        return True
+
+    def _ssh_failure(self, result: cli.CommandResult) -> bool:
+        """SSH 传输层失败（255）统一提示并清掉登录态。"""
+        if not self.remote or result.code != ssh_session.TRANSPORT_EXIT:
+            return False
+        self._drop_ssh()
+        self._reset_identity_state("SSH 连接已断开，请重新登录")
+        details = result.stderr.strip() or result.stdout.strip()
+        self._error(
+            "SSH 连接失败",
+            f"无法通过 SSH 与 {self.ssh_profile['host']} 通信。请先在终端确认 "
+            "`ssh <主机>` 可以直接登录（GUI 只支持密钥/agent 认证）。",
+            details or None,
+        )
+        return True
+
+    def _server_data_dir(self) -> str:
+        """服务端数据目录：优先界面上的值，其次 info 返回的实际目录。"""
+        value = self.data_dir.strip()
+        if value:
+            if self.remote:
+                return value
+            return str(Path(os.path.expanduser(value)).resolve())
+        if self.info is not None:
+            return self.info.data_dir
+        return "" if self.remote else self.defaults["data_dir"]
+
+    def _service_user(self) -> str:
+        """systemd 服务所属用户：远端用登录 shell 报回来的用户名。"""
+        if self.remote:
+            return self.ssh.remote_user if self.ssh is not None else ""
+        return service_plan.current_user()
+
     # ---- 启动 ---------------------------------------------------------
 
     def bootstrap(self) -> None:
         try:
             self._binary()
         except RuntimeError as exc:
-            self._error(
-                "找不到 chat-deepseek",
-                "请在设置里选择 chat-deepseek 所在的二进制目录。",
-                str(exc),
-            )
+            self._error("chat-deepseek", str(exc))
             return
         # GUI 的登录态绑定在 GUI 进程自己身上；启动时不读取父 shell 的会话，
         # 避免误用（以及在关闭时误退出）终端里的登录。
@@ -925,7 +1079,7 @@ class MainWindow(QMainWindow):
     def _load_info(self, then: Callable[[], None] | None = None) -> None:
         """读取 `info`：服务端配置、初始化状态和 systemd 状态。"""
         try:
-            binary = self._binary()
+            self._binary()
         except RuntimeError:
             return
         self.info_generation += 1
@@ -934,7 +1088,7 @@ class MainWindow(QMainWindow):
 
         def work() -> None:
             try:
-                result = cli.run_command(binary, args)
+                result = self._run(args)
             except Exception as exc:  # noqa: BLE001 - 直接呈现在提示里
                 result = cli.CommandResult(tuple(args), 1, "", str(exc))
             self._post(lambda: self._apply_info(result, generation, then))
@@ -950,6 +1104,8 @@ class MainWindow(QMainWindow):
         if self.closing or generation != self.info_generation:
             return
         if not result.ok:
+            if self._binary_missing(result) or self._ssh_failure(result):
+                return
             failure = parsing.explain_failure(
                 result.stderr, result.stdout, result.args, result.code
             )
@@ -975,13 +1131,24 @@ class MainWindow(QMainWindow):
         self.public_url = info.public_url
         self.api_origin = info.api_origin
         self.backup_dir = info.backup_dir
+        if self.remote and not self.data_dir.strip():
+            # 远端留空表示用 CLI 默认值；info 返回的就是实际目录，填回来便于展示。
+            self.data_dir = info.data_dir
+            self.ssh_profile["data_dir"] = info.data_dir
         self.service_supported = info.service_supported
         self.service_installed = info.service_installed
         self.service_active = info.service_active
         self.service_enabled = info.service_enabled
         self.service_linger = info.service_linger
-        self.version_label.setText(
-            f"chat-deepseek {info.version} · {info.os}/{info.arch}"
+        label = f"chat-deepseek {info.version} · {info.os}/{info.arch}"
+        if self.remote:
+            label += f" · SSH {self.ssh_profile['host']}"
+        self.version_label.setText(label)
+        self.auto_switch.setEnabled(not self.remote)
+        self.auto_switch.setToolTip(
+            "远端服务请在浏览器打开 Public URL；GUI 不做端口映射"
+            if self.remote
+            else ""
         )
         self._update_data_summary()
         self._render_account_state()
@@ -996,6 +1163,10 @@ class MainWindow(QMainWindow):
     def _migrate_legacy_backup_dir(self) -> None:
         """把 v1 config.gui.json 里的备份地址写进 config.json。"""
         legacy = self.legacy_backup_dir
+        # v1 的备份地址是本机路径，对远端没有意义。
+        if self.remote:
+            self.legacy_backup_dir = ""
+            return
         if not legacy or self.info is None or self.busy:
             return
         self.legacy_backup_dir = ""
@@ -1059,7 +1230,7 @@ class MainWindow(QMainWindow):
             return
         self.unit_row.show()
         self.info_strip.setFixedHeight(56)
-        self.unit_summary.setText("用户目录")
+        self.unit_summary.setText("用户目录（远端）" if self.remote else "用户目录")
         self.enabled_badge.set_state(
             "开机自启" if info.service_enabled else "未设置开机自启",
             "success" if info.service_enabled else "muted",
@@ -1073,13 +1244,24 @@ class MainWindow(QMainWindow):
             "linger 已开启" if info.service_linger else "linger 未开启",
             "success" if info.service_linger else "warning",
         )
-        self.linger_badge.setToolTip(
-            "注销后服务继续运行"
-            if info.service_linger
-            else "未开启 linger：注销后服务会停止。"
-            "以该用户执行 loginctl enable-linger <user>"
+        if self.remote:
+            linger = (
+                "linger 已开启：断开 SSH 后服务继续运行"
+                if info.service_linger
+                else "未开启 linger：断开 SSH 后用户级服务会停止。"
+                "在远端以该用户执行 loginctl enable-linger <user>"
+            )
+        else:
+            linger = (
+                "注销后服务继续运行"
+                if info.service_linger
+                else "未开启 linger：注销后服务会停止。"
+                "以该用户执行 loginctl enable-linger <user>"
+            )
+        self.linger_badge.setToolTip(linger)
+        self.info_strip.setToolTip(
+            "systemd 用户服务（远端）" if self.remote else "systemd 用户服务"
         )
-        self.info_strip.setToolTip("systemd 用户服务")
 
     # ---- 账户 ---------------------------------------------------------
 
@@ -1094,7 +1276,7 @@ class MainWindow(QMainWindow):
         if self.users_loading or self.busy:
             return
         try:
-            binary = self._binary()
+            self._binary()
         except RuntimeError:
             return
         self.users_loading = True
@@ -1105,7 +1287,7 @@ class MainWindow(QMainWindow):
 
         def work() -> None:
             try:
-                result = cli.run_command(binary, args)
+                result = self._run(args)
             except Exception as exc:  # noqa: BLE001
                 result = cli.CommandResult(tuple(args), 1, "", str(exc))
             self._post(lambda: self._apply_users(result, generation))
@@ -1120,6 +1302,9 @@ class MainWindow(QMainWindow):
         self.users_loading = False
         self._update_buttons()
         if not result.ok:
+            if self._ssh_failure(result):
+                self._run_pending_action()
+                return
             if result.code == 3:
                 self._reset_identity_state("登录已失效，请重新登录")
                 return
@@ -1411,6 +1596,11 @@ class MainWindow(QMainWindow):
         ):
             button.setEnabled(backup_enabled)
             button.setToolTip(backup_reason)
+        if self.remote:
+            self.backup_as_button.setEnabled(False)
+            self.backup_as_button.setToolTip(
+                "远端备份写到远端配置的备份地址，请用“立即备份”"
+            )
 
         self.help_button.setEnabled(not busy)
         self.identity_button.setEnabled(
@@ -1628,15 +1818,24 @@ class MainWindow(QMainWindow):
         self.auto_opened = False
         self.server_generation += 1
         generation = self.server_generation
+        if self.remote:
+            # 远端前台会话和本地一样：GUI 关闭或 SSH 断开就结束，常驻请装服务。
+            # 远端命令会先打印自己的 PID，停止时按 PID 发 SIGTERM。
+            remote = shlex.join([binary, *args])
+            command = ssh_session.serve_command(
+                self.ssh_profile["host"], remote
+            )
+        else:
+            command = [binary, *args]
         server = cli.ServerProcess(
-            binary,
-            args,
+            command,
             on_line=lambda line: self._post(
                 lambda: self._handle_serve_line(generation, line)
             ),
             on_exit=lambda code: self._post(
                 lambda: self._handle_serve_exit(generation, code)
             ),
+            marker=ssh_session.SERVE_PID_PREFIX if self.remote else None,
         )
         self.server = server
         try:
@@ -1673,15 +1872,77 @@ class MainWindow(QMainWindow):
             on_failure=self._service_failure,
         )
 
-    def _stop_foreground_session(self) -> None:
-        if self.server is None or not self.server.running:
+    def _stop_foreground_session(self, *, wait_remote: bool = True) -> None:
+        server = self.server
+        if server is None:
             return
-        self.server_stopping = True
-        self.server.stop(wait=True, timeout=5)
         self.server = None
         self.server_url = None
         self.server_address = None
         self.auto_opened = False
+        self.server_stopping = True
+        if not self.remote:
+            if server.running:
+                server.stop(wait=wait_remote, timeout=5)
+            return
+
+        # 远端：先发 SIGTERM 让远端的 serve 自己退出，ssh 随之结束；发不出去
+        # 再兜底结束本地 ssh，免得界面一直卡在“正在停止”。
+        def work() -> None:
+            pid = server.marker_pid or self._wait_server_pid(server, 5.0)
+            if pid is not None and self._send_term(pid):
+                return
+            if server.running:
+                server.stop(wait=True, timeout=5)
+
+        if wait_remote:
+            thread = threading.Thread(target=work, daemon=True)
+            thread.start()
+            # 关窗/切换目标时不能无限等，超时就继续关通道。
+            thread.join(timeout=8)
+        else:
+            threading.Thread(target=work, daemon=True).start()
+
+    def _wait_server_pid(
+        self, server: cli.ServerProcess, timeout: float
+    ) -> int | None:
+        """等远端 serve 报回自己的 PID；刚启动就点停止时那一行可能还在路上。"""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if server.marker_pid is not None:
+                return server.marker_pid
+            if not server.running:
+                return None
+            time.sleep(0.05)
+        return server.marker_pid
+
+    def _send_term(self, pid: int) -> bool:
+        """结束远端前台会话。
+
+        `ssh -T` 没有分配 pty，客户端退出时 sshd 不会给远端命令发 SIGHUP；
+        只结束本地 ssh 会在远端留下继续占端口的进程，所以要按 PID 显式发
+        SIGTERM。这条命令走常驻通道，和 serve 自己的 ssh 是两条连接。
+        """
+        try:
+            result = self._ssh_connection().run(
+                "kill", ["-TERM", str(pid)], timeout=5
+            )
+        except Exception:  # noqa: BLE001 - 通道断了就只能交给远端自己退出
+            return False
+        # kill 返回 1 表示进程已经不在了，同样算结束。
+        if result.code in (0, 1):
+            return True
+        if not self.closing:
+            failure = parsing.explain_failure(
+                result.stderr, result.stdout, result.args, result.code
+            )
+            self._post(
+                lambda: self._toast(
+                    f"没能结束远端进程（PID {pid}）：{failure.message}",
+                    error=True,
+                )
+            )
+        return False
 
     def _after_service_started(self, warnings: str = "") -> None:
         self.service_installed = True
@@ -1709,8 +1970,11 @@ class MainWindow(QMainWindow):
             or not self.service_active
         ):
             return
+        url = self._page_url()
+        if not url:
+            return
         self.auto_opened = True
-        self._open_url(self._page_url())
+        self._open_url(url)
 
     def _handle_serve_line(self, generation: int, line: str) -> None:
         if generation != self.server_generation or self.server is None:
@@ -1723,7 +1987,12 @@ class MainWindow(QMainWindow):
         elif event.kind == "url":
             self.server_url = event.value
             self._set_status("运行中", "success", event.value)
-            if self.auto_switch.isChecked() and not self.auto_opened:
+            # 远端 serve 打印的是远端 loopback 地址，不能在本机浏览器打开。
+            if (
+                not self.remote
+                and self.auto_switch.isChecked()
+                and not self.auto_opened
+            ):
                 self.auto_opened = True
                 self._open_url(event.value)
         elif event.kind == "stopping":
@@ -1742,8 +2011,15 @@ class MainWindow(QMainWindow):
         self._update_service_ui()
         self._update_buttons()
         if code != 0 and not was_stopping and not self.closing:
-            failure = parsing.explain_serve_failure(self.server_tail, code)
-            self._error(failure.title, failure.message, failure.details)
+            if self.remote and code == ssh_session.TRANSPORT_EXIT:
+                self._error(
+                    "SSH 连接失败",
+                    "远端 serve 会话已断开；远程常驻请安装 systemd 服务。",
+                    "\n".join(self.server_tail).strip() or None,
+                )
+            else:
+                failure = parsing.explain_serve_failure(self.server_tail, code)
+                self._error(failure.title, failure.message, failure.details)
         elif was_stopping:
             self._toast("服务已停止")
 
@@ -1757,7 +2033,7 @@ class MainWindow(QMainWindow):
         self.server_stopping = True
         self._set_status("正在停止…", "warning", "正在关闭服务")
         self._update_buttons()
-        self.server.stop()
+        self._stop_foreground_session(wait_remote=False)
 
     def _stop_systemd_service(self) -> None:
         child_running = self.server is not None and self.server.running
@@ -1826,14 +2102,18 @@ class MainWindow(QMainWindow):
         except RuntimeError as exc:
             self._error("chat-deepseek", str(exc))
             return
-        raw_data_dir = self.data_dir.strip() or self.defaults["data_dir"]
-        data_dir = str(Path(os.path.expanduser(raw_data_dir)).resolve())
+        raw_data_dir = self._server_data_dir()
+        if not raw_data_dir:
+            self._error("chat-deepseek", "先读取远端数据目录")
+            return
+        data_dir = raw_data_dir
         dialog = dialogs.InstallServiceDialog(
             self,
             binary=binary,
             data_dir=data_dir,
             linger=self.service_linger,
-            username=service_plan.current_user(),
+            username=self._service_user(),
+            host=self.ssh_profile["host"] if self.remote else "",
         )
         dialog.exec_modal()
         value = dialog.value
@@ -1887,14 +2167,18 @@ class MainWindow(QMainWindow):
         except RuntimeError as exc:
             self._error("chat-deepseek", str(exc))
             return
-        raw_data_dir = self.data_dir.strip() or self.defaults["data_dir"]
-        data_dir = str(Path(os.path.expanduser(raw_data_dir)).resolve())
+        raw_data_dir = self._server_data_dir()
+        if not raw_data_dir:
+            self._error("chat-deepseek", "先读取远端数据目录")
+            return
+        data_dir = raw_data_dir
         dialog = dialogs.InstallServiceDialog(
             self,
             binary=binary,
             data_dir=data_dir,
             linger=self.service_linger,
-            username=service_plan.current_user(),
+            username=self._service_user(),
+            host=self.ssh_profile["host"] if self.remote else "",
             installed=True,
             enabled=self.service_enabled,
             active=self.service_active,
@@ -1972,9 +2256,18 @@ class MainWindow(QMainWindow):
         if not running and not (self.service_installed and self.service_active):
             self._toast("服务没有在运行", error=True)
             return
-        self._open_url(self._page_url())
+        url = self._page_url()
+        if not url:
+            self._toast(
+                "远端服务需要先配置 Public URL，GUI 不做端口映射", error=True
+            )
+            return
+        self._open_url(url)
 
     def _open_url(self, url: str) -> None:
+        if not url:
+            self._toast("没有可打开的地址", error=True)
+            return
         QDesktopServices.openUrl(QUrl(url))
         self._toast(f"已打开 {url}")
 
@@ -1991,6 +2284,11 @@ class MainWindow(QMainWindow):
         )
 
     def backup_as(self) -> None:
+        if self.remote:
+            self._toast(
+                "远端备份写到远端配置的备份地址，请用“立即备份”", error=True
+            )
+            return
         if not self._ensure_login(self.backup_as):
             return
         if not self._require_owner():
@@ -2025,7 +2323,7 @@ class MainWindow(QMainWindow):
         if self.backups_loading or self.closing:
             return
         try:
-            binary = self._binary()
+            self._binary()
         except RuntimeError:
             return
         self.backups_loading = True
@@ -2034,7 +2332,7 @@ class MainWindow(QMainWindow):
 
         def work() -> None:
             try:
-                result = cli.run_command(binary, args)
+                result = self._run(args)
             except Exception as exc:  # noqa: BLE001 - 直接呈现在信息栏
                 result = cli.CommandResult(tuple(args), 1, "", str(exc))
             self._post(
@@ -2050,6 +2348,9 @@ class MainWindow(QMainWindow):
             return
         self.backups_loading = False
         if not result.ok:
+            if self._ssh_failure(result):
+                self._run_pending_action()
+                return
             if result.code == 3:
                 self._reset_identity_state("登录已失效，请重新登录")
                 return
@@ -2172,7 +2473,7 @@ class MainWindow(QMainWindow):
         target = Path(path)
         stamp = parsing.parse_backup_time(path)
         label = stamp.strftime("%Y-%m-%d %H:%M:%S") if stamp else str(target)
-        if target.is_file():
+        if not self.remote and target.is_file():
             human = parsing.format_size(target.stat().st_size)
             text = f"最近备份：{label}（{human}）"
         else:
@@ -2192,55 +2493,182 @@ class MainWindow(QMainWindow):
     # ---- 设置 ---------------------------------------------------------
 
     def open_settings(self) -> None:
+        """打开设置；远端还没读到 config.json 时先读一次再弹表单。"""
+        if self.remote and self.info is None and not self.settings_pending:
+            # 表单里的值只能来自目标主机的 config.json，先读一次，避免把本机或
+            # 上一个目标的值填进来。
+            self.settings_pending = True
+            self._toast("正在读取远端配置…")
+            self._load_info(then=self._open_settings_after_info)
+            # 读失败时 _load_info 不会再回调；兜底照常打开，否则改不了路径。
+            QTimer.singleShot(2500, self._open_settings_after_info)
+            return
+        self._open_settings()
+
+    def _open_settings_after_info(self) -> None:
+        if not self.settings_pending or self.closing:
+            return
+        self._open_settings()
+
+    def _lookup_server_config(
+        self,
+        dialog: dialogs.SettingsDialog,
+        connection: str,
+        target: dict[str, str],
+        generation: int,
+    ) -> None:
+        """读取所选主机自己的 config.json，异步回填设置表单。
+
+        备份地址、监听地址、Public URL、API 地址都存在各自数据目录的
+        config.json 里；切换连接方式时必须按目标主机重新读。
+        """
+
+        def work() -> None:
+            values, error = self._read_server_config(connection, target)
+            self._post(
+                lambda: self._apply_server(
+                    dialog, connection, generation, values, error
+                )
+            )
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_server(
+        self,
+        dialog: dialogs.SettingsDialog,
+        connection: str,
+        generation: int,
+        values: dict[str, str] | None,
+        error: str,
+    ) -> None:
+        try:
+            dialog.apply_server(connection, generation, values, error)
+        except RuntimeError:
+            # 读回来之前对话框已经关掉了。
+            pass
+
+    def _read_server_config(
+        self, connection: str, target: dict[str, str]
+    ) -> tuple[dict[str, str] | None, str]:
+        args = ["info"]
+        data_dir = target.get("data_dir", "").strip()
+        if data_dir:
+            args += ["--data-dir", data_dir]
+        try:
+            if connection == "local":
+                command = [
+                    self._resolve_binary(target.get("binary_dir", "")),
+                    *args,
+                ]
+            else:
+                host = target.get("host", "").strip()
+                if not host:
+                    return None, "请先填写 SSH 主机"
+                binary = ssh_session.remote_binary(target.get("binary_dir", ""))
+                command = ssh_session.ssh_command(
+                    host, shlex.join([binary, *args])
+                )
+        except RuntimeError as exc:
+            return None, str(exc)
+        try:
+            result = cli.run_command(command[0], command[1:], timeout=20)
+        except Exception as exc:  # noqa: BLE001 - 超时等直接作为提示
+            return None, str(exc)
+        if not result.ok:
+            failure = parsing.explain_failure(
+                result.stderr, result.stdout, result.args, result.code
+            )
+            return None, failure.message
+        try:
+            info = parsing.parse_info(result.stdout)
+        except parsing.ParseError:
+            return None, "无法识别 chat-deepseek 返回的服务信息"
+        return {
+            "backup_dir": info.backup_dir,
+            "listen": info.listen,
+            "public_url": info.public_url,
+            "api_origin": info.api_origin,
+        }, ""
+
+    def _open_settings(self) -> None:
+        self.settings_pending = False
         dialog = dialogs.SettingsDialog(
             self,
-            self.binary_dir,
-            self.data_dir,
-            self.backup_dir,
-            self.listen,
-            self.public_url,
-            self.api_origin,
-            self.defaults,
+            connection=self.connection,
+            local=self.local_profile,
+            ssh=self.ssh_profile,
+            backup_dir=self.backup_dir,
+            listen=self.listen,
+            public_url=self.public_url,
+            api_origin=self.api_origin,
+            defaults=self.defaults,
+            server_lookup=self._lookup_server_config,
         )
         dialog.exec_modal()
         if not isinstance(dialog.value, dict):
             return
         value = dialog.value
-        binary_dir = str(value["binary"])
-        data_dir = os.path.expanduser(str(value["data_dir"]))
-        backup_dir = os.path.expanduser(str(value["backup_dir"]))
+        connection = str(value["connection"])
+        local = dict(value["local"])
+        ssh_values = dict(value["ssh"])
+        local["username"] = self.local_profile["username"]
+        ssh_values["username"] = self.ssh_profile["username"]
+        backup_dir = str(value["backup_dir"])
         listen = str(value["listen"])
         public_url = str(value["public_url"])
         api_origin = str(value["api_origin"])
-        try:
-            binary = self._resolve_binary(binary_dir)
-        except RuntimeError as exc:
-            self._error("chat-deepseek", str(exc))
-            return
         if self.busy:
             self._toast("正在执行上一条命令", error=True)
             return
 
-        data_changed = (
-            Path(data_dir).expanduser() != Path(self.data_dir).expanduser()
+        target_changed = connection != self.connection or (
+            connection == "ssh"
+            and ssh_values["host"] != self.ssh_profile["host"]
         )
-        changed = self._settings_changes(
-            data_changed, listen, public_url, api_origin, backup_dir
+        try:
+            if connection == "local":
+                binary = self._resolve_binary(local["binary_dir"])
+            else:
+                binary = ssh_session.remote_binary(ssh_values["binary_dir"])
+        except RuntimeError as exc:
+            self._error("chat-deepseek", str(exc))
+            return
+
+        if target_changed:
+            data_changed = False
+        elif connection == "local":
+            data_changed = (
+                Path(local["data_dir"]).expanduser()
+                != Path(self.data_dir).expanduser()
+            )
+        else:
+            desired = ssh_values["data_dir"].strip()
+            if not desired and self.info is not None:
+                desired = self.info.data_dir
+            data_changed = desired != self.data_dir.strip()
+
+        # 换连接/主机时，界面上的服务端配置还是旧目标的，不能写到新目标上。
+        changed = (
+            []
+            if target_changed
+            else self._settings_changes(
+                data_changed, listen, public_url, api_origin, backup_dir
+            )
         )
         old_binary = self.binary_dir
         old_data = self.data_dir
-        old_default_data = self.defaults["data_dir"]
         had_identity = self.identity is not None
+        config_dir = local["data_dir"] if connection == "local" else ssh_values["data_dir"]
 
         self._set_busy(True)
 
         def work() -> None:
             for key, value_text in changed:
                 args = ["config", "set", key, value_text]
-                if data_dir.strip():
-                    args += ["--data-dir", data_dir]
+                if config_dir.strip():
+                    args += ["--data-dir", config_dir]
                 try:
-                    result = cli.run_command(binary, args)
+                    result = self._run(args, binary=binary)
                 except Exception as exc:  # noqa: BLE001 - 直接呈现在提示里
                     result = cli.CommandResult(tuple(args), 1, "", str(exc))
                 if not result.ok:
@@ -2248,21 +2676,47 @@ class MainWindow(QMainWindow):
                     return
             self._post(
                 lambda: self._settings_saved(
-                    binary_dir,
-                    data_dir,
-                    backup_dir,
-                    listen,
-                    public_url,
-                    api_origin,
+                    value,
+                    target_changed,
                     data_changed,
                     had_identity,
                     old_binary,
                     old_data,
-                    old_default_data,
                 )
             )
 
         threading.Thread(target=work).start()
+
+    def _logout_target(
+        self, remote: bool, host: str, binary_dir: str, data_dir: str
+    ) -> None:
+        """显式退出旧目标，清掉它数据库里的 auth_sessions 行。
+
+        切换连接方式/主机/数据目录之后 GUI 已经拿不到旧目标的登录态，不主动
+        logout 就会在它的 auth_sessions 里留一行，直到 15 分钟过期。失败不
+        阻塞设置保存，等过期即可。
+        """
+        args = ["logout"]
+        data = data_dir.strip()
+        if data:
+            args += ["--data-dir", data if remote else os.path.expanduser(data)]
+        try:
+            if remote:
+                # 远端登录态绑在常驻通道那个 shell 上；另开一条 ssh 的 shell
+                # 找不到会话文件，只能等过期，所以必须走原通道。
+                session = self.ssh
+                if session is None or not session.connected:
+                    return
+                session.run(
+                    ssh_session.remote_binary(binary_dir), args, timeout=5
+                )
+                return
+            path = Path(binary_dir).expanduser()
+            executable = path if path.is_file() else cli.binary_in(path)
+            if executable.is_file():
+                cli.run_command(str(executable), args, timeout=5)
+        except Exception:  # noqa: BLE001 - 登出失败不阻塞设置保存
+            pass
 
     def _settings_changes(
         self,
@@ -2293,6 +2747,8 @@ class MainWindow(QMainWindow):
 
     def _settings_failed(self, result: cli.CommandResult) -> None:
         self._set_busy(False)
+        if self._ssh_failure(result):
+            return
         failure = parsing.explain_failure(
             result.stderr, result.stdout, result.args, result.code
         )
@@ -2303,69 +2759,99 @@ class MainWindow(QMainWindow):
 
     def _settings_saved(
         self,
-        binary_dir: str,
-        data_dir: str,
-        backup_dir: str,
-        listen: str,
-        public_url: str,
-        api_origin: str,
+        value: dict[str, object],
+        target_changed: bool,
         data_changed: bool,
         had_identity: bool,
         old_binary: str,
         old_data: str,
-        old_default_data: str,
     ) -> None:
         self._set_busy(False)
+        connection = str(value["connection"])
+        local = dict(value["local"])  # type: ignore[arg-type]
+        ssh_values = dict(value["ssh"])  # type: ignore[arg-type]
+        local["username"] = self.local_profile["username"]
+        ssh_values["username"] = self.ssh_profile["username"]
+        listen = str(value["listen"])
+        public_url = str(value["public_url"])
+        api_origin = str(value["api_origin"])
+        backup_dir = str(value["backup_dir"])
         try:
             gui_config.save(
                 self.gui_config_path,
                 gui_config.Config(
-                    connection=self.connection,
-                    binary_dir=binary_dir,
-                    data_dir=data_dir,
-                    username=self.last_username,
+                    connection=connection,
+                    local=gui_config.LocalConfig(**local),
+                    ssh=gui_config.SshConfig(**ssh_values),
                 ),
             )
         except OSError as exc:
             self._error("保存设置失败", f"无法写入 config.gui.json：{exc}")
             return
 
-        self.binary_dir = binary_dir
-        self.data_dir = data_dir
+        was_remote = self.remote
+        old_host = self.ssh_profile["host"]
+        if had_identity and (target_changed or data_changed):
+            # GUI 切走以后就拿不到旧目标的登录态了，不 logout 会在它的
+            # auth_sessions 里留一行，等过期才清掉。
+            self._logout_target(was_remote, old_host, old_binary, old_data)
+        self.local_profile = local
+        self.ssh_profile = ssh_values
+        if target_changed:
+            self._stop_foreground_session()
+            self._drop_ssh()
+            self.users = []
+            self.selected = None
+            self.backups = []
+        elif data_changed and was_remote:
+            # 远端登录态绑定旧数据目录；关掉通道，下次命令重新登录。
+            self._drop_ssh()
+        stale = target_changed or data_changed
+        if stale:
+            self.info = None
+            self.data_ready = False
+            self.service_supported = False
+            self.service_installed = False
+            self.service_active = False
+            self.service_enabled = False
+            self.service_linger = False
+
+        self.connection = connection
+        self.binary_dir = (
+            local["binary_dir"]
+            if connection == "local"
+            else ssh_values["binary_dir"]
+        )
+        self.data_dir = (
+            local["data_dir"] if connection == "local" else ssh_values["data_dir"]
+        )
+        self.last_username = (
+            local["username"]
+            if connection == "local"
+            else ssh_values["username"]
+        )
         self.listen = listen
         self.public_url = public_url
         self.api_origin = api_origin
-        resolved_data = (
-            data_dir.strip()
-            or str(server_config.default_data_dir(binary_dir))
-        )
-        self.backup_dir = backup_dir or server_config.default_backup_dir(resolved_data)
-        self.defaults = server_config.defaults(Path(binary_dir))
+        if connection == "local" and not stale:
+            self.defaults = server_config.defaults(Path(local["binary_dir"]))
+            resolved_data = local["data_dir"] or str(
+                server_config.default_data_dir(local["binary_dir"])
+            )
+            self.backup_dir = backup_dir or server_config.default_backup_dir(
+                resolved_data
+            )
+        elif connection == "local":
+            self.defaults = server_config.defaults(Path(local["binary_dir"]))
+            self.backup_dir = ""
+        else:
+            # 远端备份地址只认该主机 config.json：对话框里的值可能还是上一个
+            # 目标或本机的，等 _load_info 读回来。
+            self.backup_dir = ""
         self._update_data_summary()
         self._refresh_data_state()
 
-        if data_changed and had_identity:
-            # 登录态绑定旧数据目录；设置保存成功后再清旧会话，失败就等它过期。
-            try:
-                old_path = Path(old_binary).expanduser()
-                old_exec = (
-                    old_path if old_path.is_file() else cli.binary_in(old_path)
-                )
-                if old_exec.is_file():
-                    old_data_path = old_data if old_data.strip() else old_default_data
-                    cli.run_command(
-                        str(old_exec),
-                        [
-                            "logout",
-                            "--data-dir",
-                            str(Path(old_data_path).expanduser()),
-                        ],
-                        timeout=5,
-                    )
-            except Exception:  # noqa: BLE001 - 登出失败不阻塞设置保存
-                pass
-
-        if data_changed:
+        if stale:
             self._reset_identity_state()
         elif self.identity is not None:
             self._refresh_identity()
@@ -2379,7 +2865,9 @@ class MainWindow(QMainWindow):
             self.server is not None and self.server.running
         ) or (self.service_installed and self.service_active)
         message = "设置已保存；服务重启后生效" if running else "设置已保存"
-        if data_changed:
+        if target_changed:
+            message += "；连接已切换，请重新登录"
+        elif data_changed:
             message += "；数据目录已切换，请重新登录"
         self._toast(message)
         self._load_info()
@@ -2394,19 +2882,27 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self.server_stopping = True
-            self.server.stop(wait=True, timeout=5)
+            self._stop_foreground_session()
         self.closing = True
         self._drain_timer.stop()
         self._identity_timer.stop()
         if self.identity is not None:
             try:
-                cli.run_command(
-                    self._binary(),
-                    ["logout", *self._data_args()],
-                    timeout=5,
-                )
+                if self.remote:
+                    self._ssh_connection().run(
+                        self._binary(),
+                        ["logout", *self._data_args()],
+                        timeout=5,
+                    )
+                else:
+                    cli.run_command(
+                        self._binary(),
+                        ["logout", *self._data_args()],
+                        timeout=5,
+                    )
             except Exception:  # noqa: BLE001 - 关闭时登出失败不阻塞退出
                 pass
+        self._drop_ssh(wait=True)
         event.accept()
 
 
