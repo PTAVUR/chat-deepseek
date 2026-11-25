@@ -9,7 +9,7 @@ import os
 import subprocess
 import sys
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QProcess, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
 from PySide6.QtWidgets import QGraphicsDropShadowEffect, QWidget
 
@@ -74,6 +74,8 @@ DARK = {
 # 尚未上报 colorScheme，仅凭切换后的调色板会把暗色系统误判成亮色。
 _dark_hint: bool | None = None
 _startup_done = False
+_application = None
+_monitor: QProcess | None = None
 
 
 def _palette_is_dark(value: QPalette) -> bool:
@@ -97,6 +99,16 @@ def _gsettings(schema: str, key: str) -> str:
     return completed.stdout.strip()
 
 
+def _is_gnome() -> bool:
+    if not sys.platform.startswith("linux"):
+        return False
+    desktop = " ".join(
+        os.environ.get(name, "")
+        for name in ("XDG_CURRENT_DESKTOP", "DESKTOP_SESSION", "GDMSESSION")
+    ).lower()
+    return any(name in desktop for name in ("gnome", "unity"))
+
+
 def _desktop_dark() -> bool | None:
     """GNOME 的通用 Qt 主题不读取系统暗色，启动时直接问 gsettings。
 
@@ -104,13 +116,7 @@ def _desktop_dark() -> bool | None:
     即使系统是暗色也可能报 Light。gsettings 的 ``color-scheme`` / ``gtk-theme``
     才是桌面实际使用的值。
     """
-    if not sys.platform.startswith("linux"):
-        return None
-    desktop = " ".join(
-        os.environ.get(name, "")
-        for name in ("XDG_CURRENT_DESKTOP", "DESKTOP_SESSION", "GDMSESSION")
-    ).lower()
-    if not any(name in desktop for name in ("gnome", "unity")):
+    if not _is_gnome():
         return None
     gtk_theme = os.environ.get("GTK_THEME", "").lower()
     if "dark" in gtk_theme:
@@ -133,15 +139,15 @@ def system_dark(application) -> bool:
         scheme = hints.colorScheme()
     except AttributeError:  # Qt < 6.5
         scheme = None
-    if scheme == Qt.ColorScheme.Dark:
-        return True
-    # 有些 Linux 桌面会把 colorScheme 暂时报成 Light，但平台调色板已经是暗色；
-    # GNOME 更常见的是两者都没同步，只能直接读桌面设置。
-    if _palette_is_dark(application.palette()):
-        return True
+    # GNOME 下 Qt 的状态可能滞后（甚至反向）；桌面设置才是实际值。
     desktop_dark = _desktop_dark()
     if desktop_dark is not None:
         return desktop_dark
+    if scheme == Qt.ColorScheme.Dark:
+        return True
+    # 有些 Linux 桌面会把 colorScheme 暂时报成 Light，但平台调色板已经是暗色。
+    if _palette_is_dark(application.palette()):
+        return True
     return False
 
 
@@ -234,7 +240,8 @@ def apply(application) -> None:
 
 def install(application) -> None:
     """设置 Fusion、字体与主题，并跟随系统深浅色变化。"""
-    global _dark_hint, _startup_done
+    global _dark_hint, _startup_done, _application
+    _application = application
     # 先读平台主题，再切换 Fusion，否则 Fusion 的浅色调色板会掩盖暗色系统。
     _dark_hint = system_dark(application)
     _startup_done = False
@@ -245,10 +252,52 @@ def install(application) -> None:
     signal = getattr(hints, "colorSchemeChanged", None)
     if signal is not None:
         signal.connect(lambda scheme: _follow_scheme(application, scheme))
+    application.aboutToQuit.connect(_stop_gnome_monitor)
     # 某些平台要等事件循环启动后才把系统主题同步到 styleHints；初始调色板是
     # 亮色但随后上报 Dark 时补一次，避免整窗停在亮色。
     QTimer.singleShot(0, lambda: _settle_scheme(application))
     QTimer.singleShot(1000, _finish_startup)
+    _start_gnome_monitor()
+
+
+def _start_gnome_monitor() -> None:
+    """监听 GNOME 设置变化；Qt 的 colorSchemeChanged 在这种环境下不可靠。"""
+    global _monitor
+    if _monitor is not None or not _is_gnome():
+        return
+    monitor = QProcess()
+    monitor.setProgram("dconf")
+    monitor.setArguments(["watch", "/org/gnome/desktop/interface/"])
+    monitor.readyReadStandardOutput.connect(_on_desktop_setting_changed)
+    monitor.start()
+    _monitor = monitor
+
+
+def _stop_gnome_monitor() -> None:
+    global _monitor
+    if _monitor is None:
+        return
+    monitor, _monitor = _monitor, None
+    monitor.terminate()
+    monitor.waitForFinished(500)
+
+
+def _on_desktop_setting_changed() -> None:
+    if _monitor is not None:
+        _monitor.readAllStandardOutput()
+    # gsettings 一次变更可能输出多行，合并成一次主题刷新。
+    QTimer.singleShot(50, _sync_desktop_theme)
+
+
+def _sync_desktop_theme() -> None:
+    global _dark_hint
+    if _application is None:
+        return
+    desktop_dark = _desktop_dark()
+    if desktop_dark is None or desktop_dark == _dark_hint:
+        return
+    _dark_hint = desktop_dark
+    apply(_application)
 
 
 def _finish_startup() -> None:
@@ -272,16 +321,23 @@ def _settle_scheme(application) -> None:
 
 def _follow_scheme(application, scheme) -> None:
     global _dark_hint
-    if scheme == Qt.ColorScheme.Dark:
-        _dark_hint = True
+    # GNOME 下 Qt 的 colorScheme 可能滞后甚至报错；以 gsettings 为准。
+    desktop_dark = _desktop_dark()
+    if desktop_dark is not None:
+        dark = desktop_dark
+    elif scheme == Qt.ColorScheme.Dark:
+        dark = True
     elif scheme == Qt.ColorScheme.Light:
         # 启动阶段平台主题可能把默认的 Light 再上报一次；此时以 install()
         # 读到的调色板为准，避免暗色系统被这条启动事件翻回亮色。
         if not _startup_done and _dark_hint:
             return
-        _dark_hint = False
+        dark = False
     else:
         return
+    if dark == _dark_hint:
+        return
+    _dark_hint = dark
     apply(application)
 
 

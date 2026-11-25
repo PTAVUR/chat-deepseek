@@ -74,7 +74,7 @@ gui/.venv/bin/python -m unittest discover -s gui/tests -v
 - 窗口标题栏、边框和圆角全部使用系统原生：Windows 是 x/□/-，GNOME 只有关闭按钮，macOS 是交通灯。不再自绘标题栏、不设置 frameless 或透明窗口。对话框也使用原生标题栏，内容高度已预留标题栏。设置和命令行提示的标题不带应用名后缀。
 - 账户列表是 60px 两行成员行：头像、用户名、组标签和右侧状态点；悬停/选中为长胶囊，选中头像变实心蓝，底部信息栏显示“已选择 / 取消选择”和操作。
 - 卡片使用五次贝塞尔连续曲率（32px），按钮、输入框、开关用胶囊端（20px），账户悬停/选中为长胶囊。
-- 界面跟随系统深浅色，并在系统主题变化时重刷配色、QSS 与原生控件调色板。启动时先读取平台调色板再切换 Fusion；GNOME 下直接读 `gsettings` 的 `color-scheme` / `gtk-theme`，避免 Qt 还没上报 `colorScheme` 时把暗色系统判成亮色。
+- 界面跟随系统深浅色，并在系统主题变化时重刷配色、QSS 与原生控件调色板。启动时先读取平台调色板再切换 Fusion；GNOME 下直接读 `gsettings` 的 `color-scheme` / `gtk-theme`，避免 Qt 还没上报 `colorScheme` 时把暗色系统判成亮色，并用 `dconf watch` 跟随系统切换。
 - 依赖不随仓库提交；PySide6 / Qt 的许可证见各自发布包。
 - 发布包中 Windows 用 `.ico` 设置 EXE 图标；macOS 用 `.app` 承载 `.icns` 图标并打进 DMG。Linux 发布包不含 GUI 二进制；从源码运行或自行打包时，ELF 文件不携带文件图标，窗口/任务栏图标由 Qt 在运行时设置。
 - Linux 需要 Qt 的 xcb 运行库；Debian/Ubuntu 若提示缺少 `xcb-cursor`，安装 `libxcb-cursor0`。

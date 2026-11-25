@@ -63,6 +63,11 @@ class SystemDarkTest(unittest.TestCase):
         application = _Application(Qt.ColorScheme.Light, "#202020")
         self.assertTrue(theme.system_dark(application))
 
+    def test_desktop_light_overrides_dark_qt(self) -> None:
+        application = _Application(Qt.ColorScheme.Dark, "#202020")
+        with mock.patch.object(theme, "_desktop_dark", return_value=False):
+            self.assertFalse(theme.system_dark(application))
+
     def test_desktop_dark_overrides_light_qt(self) -> None:
         # GNOME 直接启动时 Qt 常报 Light、调色板也是浅色，只能靠 gsettings。
         application = _Application(Qt.ColorScheme.Light, "#fafafa")
@@ -151,7 +156,10 @@ class SchemeSignalTest(unittest.TestCase):
     def test_startup_light_signal_does_not_undo_dark_palette(self) -> None:
         theme._dark_hint = True
         theme._startup_done = False
-        with mock.patch.object(theme, "apply") as apply:
+        with (
+            mock.patch.object(theme, "_desktop_dark", return_value=None),
+            mock.patch.object(theme, "apply") as apply,
+        ):
             theme._follow_scheme(None, Qt.ColorScheme.Light)
             apply.assert_not_called()
         self.assertTrue(theme._dark_hint)
@@ -159,8 +167,29 @@ class SchemeSignalTest(unittest.TestCase):
     def test_light_signal_after_startup_is_applied(self) -> None:
         theme._dark_hint = True
         theme._startup_done = True
-        with mock.patch.object(theme, "apply") as apply:
+        with (
+            mock.patch.object(theme, "_desktop_dark", return_value=None),
+            mock.patch.object(theme, "apply") as apply,
+        ):
             theme._follow_scheme(None, Qt.ColorScheme.Light)
+            apply.assert_called_once()
+        self.assertFalse(theme._dark_hint)
+
+    def test_gnome_setting_wins_over_qt_signal(self) -> None:
+        theme._dark_hint = True
+        theme._startup_done = True
+        with (
+            mock.patch.object(theme, "_desktop_dark", return_value=True),
+            mock.patch.object(theme, "apply") as apply,
+        ):
+            theme._follow_scheme(None, Qt.ColorScheme.Light)
+            apply.assert_not_called()
+        self.assertTrue(theme._dark_hint)
+        with (
+            mock.patch.object(theme, "_desktop_dark", return_value=False),
+            mock.patch.object(theme, "apply") as apply,
+        ):
+            theme._follow_scheme(None, Qt.ColorScheme.Dark)
             apply.assert_called_once()
         self.assertFalse(theme._dark_hint)
 

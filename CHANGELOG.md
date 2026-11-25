@@ -16,7 +16,7 @@
 - 账户操作按当前身份置灰：Admin 只能管理普通 User，不能授组或备份；Owner 可以授组、备份和操作 Admin/Owner；不能禁用或删除自己。
 - 登录态绑定 GUI 进程，15 分钟过期，关闭窗口自动 `logout`；切换数据目录或恢复备份后需要重新登录。
 - `config.gui.json` 记住上次登录的用户名，不保存密码。
-- 修复暗色系统直接启动时被 Fusion 浅色调色板误判为亮色的问题：先读平台调色板，再切换 Fusion；GNOME 下额外读取 `gsettings` 的 `color-scheme` / `gtk-theme`，不依赖 Qt 延迟上报的 `colorScheme`。
+- 修复暗色系统直接启动时被 Fusion 浅色调色板误判为亮色的问题：先读平台调色板，再切换 Fusion；GNOME 下额外读取 `gsettings` 的 `color-scheme` / `gtk-theme`，并用 `dconf watch` 跟随系统主题切换，不依赖 Qt 延迟上报的 `colorScheme`。
 
 ## 0.1.1-official0.1.3 - 2026-11-23
 
