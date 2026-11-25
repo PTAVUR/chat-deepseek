@@ -5,7 +5,7 @@
 
 ## 1. 项目是什么
 
-- 项目：`chat-deepseek`，本地目录 `chat-deepseek`，版本 `0.1.2-official0.1.3`，MIT。
+- 项目：`chat-deepseek`，本地目录 `chat-deepseek`，版本 `0.1.3-official0.1.4`，MIT。
 - 来源：`https://github.com/deepseek-ai/chat-demo.git` 的克隆。远程 `upstream`（原 `origin`）指向上游，`origin` 指向自己的 GitHub fork `git@github.com:elegantgx/chat-deepseek.git`（SSH）。
 - 分支策略：`main` 只镜像上游、不在上面开发；日常改造在 `feature/*` 分支进行，定期把 `main` 同步到上游后合并进 feature 分支，再推送到 `origin`。
 - 定位：**Go 自托管服务端 + React Web 客户端**；服务端保存账户、会话、附件、设置和 API Key，浏览器不再保存聊天或 Key，也不再使用 localStorage/IndexedDB。
@@ -17,13 +17,13 @@
 ## 2. 当前状态（2026-11-25 核验）
 
 - 改造状态：v1 主链路可用。Go 服务端具备账户/组、登录/CSRF、设置与 API Key 加密、会话版本锁/永久删除、附件存储、DeepSeek Files/SSE/ASR/TTS 代理和 Web UI 嵌入；前端已登录门、设置、会话、附件全部走 `/api/v1`，localStorage/IndexedDB 已移除。
-- Git：当前在 `feature/dev`；`main` 跟踪 `upstream/main`，`feature/dev` 跟踪 `origin/feature/dev`；`AGENTS.md` 提交在 feature 分支。
+- Git：当前在 `feature/dev`；`main` 跟踪 `upstream/main`，`feature/dev` 跟踪 `origin/feature/dev`；`AGENTS.md` 提交在 feature 分支。已合并上游 `v0.1.4`（合并提交 `7e88ec5`）。
 - `pnpm type`：通过。
-- `pnpm lint`：通过，`0 warnings and 0 errors`（约 131 个文件）。
+- `pnpm lint`：通过，`0 warnings and 0 errors`（约 132 个文件）。
 - `pnpm build`：通过，生成 `dist/` 并复制到 `internal/webui/dist/` 供 `go:embed`。
 - CLI 管理登录：`login` / `logout` / `whoami` 按 shell 隔离、固定 15 分钟；`user ...` / `backup ...` 按 Owner/Admin 校验，退出码 `3` 未登录、`4` 权限不足。GUI 已适配：未登录时账户区显示锁图标、备份区提示登录后查看，点登录/刷新/添加/备份会弹登录框；按钮按 Admin/Owner 权限置灰，关闭 GUI 自动 logout。
 - 测试：Go 单元/接口测试覆盖 auth、account、database、config、secret、settings、chat、filestore、backup、deepseek、server、cli；`go test ./...` 通过。前端没有自动化测试。
-- 手动端到端：已用临时数据目录 + dev 代理走通登录、退出、设置/API Key、会话创建/加载/刷新持久化、附件上传和 SSE mock 回复；侧边栏 Logo、头像菜单、Deepseek 标题与 favicon 已在无头 Chrome 验证（桌面与移动端），登录页明暗两套样式、DM Sans 字标和首页鲸鱼也已核对；系统设置已按官方左右分栏与行式列表重做，账户资料保存后就地更新且不关闭弹窗；桌面与移动端均已在无头 Chrome 核对；删除会话、清空全部会话和移除草稿附件后，`files` 表、磁盘原件和空用户目录均已核对清理；历史导出后重新导入会重映射附件 ID 并原子替换会话；`backup` 在服务运行时拒绝、停止后生成 ZIP。
+- 手动端到端：已用临时数据目录 + dev 代理走通登录、退出、设置/API Key、会话创建/加载/刷新持久化、附件上传和 SSE mock 回复；侧边栏 Logo、头像菜单、Deepseek 标题与 favicon 已在无头 Chrome 验证（桌面与移动端），登录页明暗两套样式、DM Sans 字标和首页鲸鱼也已核对；系统设置已按官方左右分栏与行式列表重做，账户资料保存后就地更新且不关闭弹窗；桌面与移动端均已在无头 Chrome 核对；删除会话、清空全部会话和移除草稿附件后，`files` 表、磁盘原件和空用户目录均已核对清理；历史导出后重新导入会重映射附件 ID 并原子替换会话，导入进度按已处理会话数显示；`backup` 在服务运行时拒绝、停止后生成 ZIP。
 - 代码规模：`src` 约 21k 行（含 CSS Modules）；最大文件是 `src/services/chat/store.ts`（约 1.1k 行）。
 - GUI：`gui/app.py` 是 PySide6（Qt 6）管理界面，`parsing.py` 解析 `user list` / `whoami` / `backup list` / `serve` / `version` 输出，`dialogs.py` 提供 Qt 登录、输入、确认和路径选择，`widgets.py` 自绘卡片、按钮、输入框、状态点、组标签与成员行；`fonts.py` 优先系统 UI 字体，`assets/whale.svg` 是 CC0 的鲸鱼标志，`whale.ico` / `whale.icns` 用于 Windows EXE 和 macOS `.app` 图标。窗口标题栏、边框和圆角全部交给系统（Windows x/□/-，GNOME 关闭按钮，macOS 交通灯），不再自绘窗口外壳。账户列表是两行成员行（头像、用户名、组标签、状态点），悬停/选中为长胶囊，选中头像变实心蓝，底部信息栏显示“已选择 / 取消选择”和操作；“备份记录…”列出备份并可恢复；未登录时账户区显示锁图标、备份区提示“登录后查看备份记录”，点登录/刷新/添加/备份先弹登录框，关闭 GUI 自动 `logout`。解析器把服务运行中、端口占用、最后一个 Owner、账户不存在、密码不合规等已知失败翻译成可操作提示，只有无法识别时才显示“未知错误”和原始输出；GUI 单元测试共 74 个通过，成员列表、服务启停、备份和账户增删改已在临时数据目录核对。
 - 源码中没有 `TODO` / `FIXME` 标记。
@@ -130,7 +130,7 @@ Go 代码遵循 `gofmt`；服务端包不写全局状态，CLI 负责装配依�
 ### 4.3 历史归档
 
 - 格式 `export_format_version: 3`，ZIP 内容：`manifest.json`（首条）、`chat_sessions/{id}.json`、`chat_session_index.json`、`chat_sessions/{id}_files/...`（仅图片原件）。
-- 导入先校验格式版本，写入浏览器内存暂存；确认后给附件换新 ID 并上传，再由服务端 `POST /import` 在一个事务里替换全部会话。失败只清理新上传文件，旧数据保持不变。
+- 导入先校验格式版本，按会话分批读取 ZIP（会话 JSON 与对应图片一起处理）并写入浏览器内存暂存，进度按已处理会话数回调；确认后给附件换新 ID 并上传，再由服务端 `POST /import` 在一个事务里替换全部会话。失败只清理新上传文件，旧数据保持不变。
 - 导出只包含当前分支与能从服务端下载的图片原件；不包含 API Key / 设置 / 非图片附件原件。
 - 导入/导出/全部删除由 `backup.ts` 串行队列执行；全部删除会永久删除该用户的服务端会话，并清空附件目录。
 - 详细规则见 `src/services/chat/history/README.md`，改动格式必须同步改文档与 `format.ts` / `schema.ts`。
@@ -321,9 +321,9 @@ GitHub Actions 发布流水线在 `.github/workflows/release-{linux,windows,maco
   ```
 
 - 冲突只在 `feature/*` 分支解决，不要为了让合并通过而修改 `main`。
-- 标签：上游 tag 原样镜像到 `origin`（`v0.1.0`–`v0.1.3` 已推送）；同步上游 tag 用 `git fetch upstream --tags`，再 `git push origin --tags`。
-- 版本：`package.json` 的名称是 `chat-deepseek`，版本是 `0.1.2-official0.1.3`；版本号第一位（major）跟随上游，当前上游也是 `0.x`。`package.json` 的 `version` 不带 `v`，但带 `official` 后缀。
-- 我们自己的发布 tag 带 `v` 前缀，格式为 `v<我们的版本>-official<上游版本>`，例如 `v1.0.0-official0.3.0`；当前版本对应 `v0.1.2-official0.1.3`，不与上游 `vX.Y.Z` 混用。`package.json` 的版本与 git tag 一一对应，tag 只多一个 `v`。
+- 标签：上游 tag 原样镜像到 `origin`（`v0.1.0`–`v0.1.4` 已推送）；同步上游 tag 用 `git fetch upstream --tags`，再 `git push origin --tags`。
+- 版本：`package.json` 的名称是 `chat-deepseek`，版本是 `0.1.3-official0.1.4`；版本号第一位（major）跟随上游，当前上游也是 `0.x`。`package.json` 的 `version` 不带 `v`，但带 `official` 后缀。
+- 我们自己的发布 tag 带 `v` 前缀，格式为 `v<我们的版本>-official<上游版本>`，例如 `v1.0.0-official0.3.0`；当前版本对应 `v0.1.3-official0.1.4`，不与上游 `vX.Y.Z` 混用。`package.json` 的版本与 git tag 一一对应，tag 只多一个 `v`。
 - `AGENTS.md` 提交在 `feature/dev`，不要提交到 `main`。
 - 本机 SSH 注意：系统配置 `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` 权限异常，仓库已设置 `core.sshCommand = ssh -F /dev/null` 绕过；换到 SSH 正常的机器时可删除该配置。
 - 查看当前跟踪关系：`git remote -v`、`git branch -vv`。
@@ -334,8 +334,9 @@ GitHub Actions 发布流水线在 `.github/workflows/release-{linux,windows,maco
 
 - **SSH 配置**：本机 `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` 权限异常，直接 `ssh` / `git push` 会报 `Bad owner or permissions`。仓库已设置 `core.sshCommand = ssh -F /dev/null` 绕过；换到 SSH 正常的机器时可以删除该配置。
 - **pnpm 12 预检**：本机全局 store 在 workspace 外（`~/.local/share/pnpm/store/v11`），DSH 沙箱下 `pnpm type` / `lint` / `build` 前的自动安装检查会报 `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` / 只读文件系统；脚本本身仍会继续执行并通过。依赖未变化时可忽略；真正需要安装依赖时可尝试把 store 指到可写目录（如 `--store-dir /tmp/pnpm-store`），当前环境尚未验证。
-- **上游连通性**：检查 GitHub upstream 时 `git ls-remote` 曾超时；本地 `upstream/main` 跟踪关系正常，同步失败先排查网络或代理。
-- **package version**：`0.1.2-official0.1.3` 是合法的 semver 预发布版本（prerelease），npm 已验证可解析，pnpm 构建也能读取；本项目不发布 npm，所以可以采用。注意它排序在 `0.1.2` 之前，不要把它当作正式版 `0.1.2` 的替代。
+- **上游连通性**：检查 GitHub upstream 时 `git ls-remote` 曾超时；本地 `upstream/main` 跟踪关系正常，同步失败先排查网络或代理。2026-11-25 经 `127.0.0.1:7897` 代理同步 `v0.1.4` 成功。
+- **上游 v0.1.4 同步**：2026-11-25 把 `main` 同步到 `cdf9617`（v0.1.4）并推送 `origin/main` 与 tag；在 `feature/dev` 合并为 `7e88ec5`。冲突集中在 `package.json`、`SettingsDialog.tsx`、`Settings.module.css`（含手写 `.d.ts`）和 `chat/db.ts`：保留服务端适配层与设置页布局，移植导入进度、附件随会话导入、ZIP 读取优化与旧浏览器兼容；`db.ts` 的内存暂存补上批量 `addStagingSessions` 和带 `sessionIds` 的 MIME 回填。
+- **package version**：`0.1.3-official0.1.4` 是合法的 semver 预发布版本（prerelease），npm 已验证可解析，pnpm 构建也能读取；本项目不发布 npm，所以可以采用。注意它排序在 `0.1.3` 之前，不要把它当作正式版 `0.1.3` 的替代。
 - **浏览器存储**：v1 已移除 localStorage/IndexedDB，旧浏览器数据不会自动迁移到服务端；需要保留历史时先在旧版本导出 ZIP，再在新版导入。
 - **README 语言**：只保留中文 `README.md`，英文版已删除；README 保持用户文档定位，试错与决策记录放这里。
 - **UI 文案与视觉**：标题、`appName` 为 `Deepseek`；字标使用 DM Sans 700（OFL，官方界面字体；官方字标本身是定制字形，不能公开使用）。侧边栏和登录页使用 Simple Icons 的 DeepSeek 鲸鱼标志（CC0-1.0）；设置入口是头像 + 用户名菜单，右侧是 `...`；登录页跟随明暗主题（亮色白底 / 暗色官方风格），首页问候语左侧有鲸鱼；系统设置采用官方左右分栏与行式列表，账户资料保存后就地更新，弹窗不关闭、不整页刷新。第三方来源与商标说明见 `THIRD_PARTY_NOTICES.md`。
