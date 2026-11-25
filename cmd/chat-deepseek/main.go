@@ -10,6 +10,6 @@ import (
 func main() {
 	if err := cli.Run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "错误：", err)
-		os.Exit(1)
+		os.Exit(cli.ExitStatus(err))
 	}
 }

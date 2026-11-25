@@ -15,7 +15,7 @@ import (
 )
 
 // schemaVersion 是当前数据库结构版本；每次改表都必须递增。
-const schemaVersion = 4
+const schemaVersion = 5
 
 // Open 打开数据目录下的 chat.db，启用 WAL/外键并执行迁移。
 func Open(dataDir string) (*sql.DB, error) {
@@ -120,6 +120,7 @@ var migrations = []migration{
 	{version: 2, sql: schemaV2},
 	{version: 3, sql: schemaV3},
 	{version: 4, sql: schemaV4},
+	{version: 5, sql: schemaV5},
 }
 
 const schemaV1 = `
@@ -230,6 +231,13 @@ DELETE FROM files WHERE deleted_at IS NOT NULL;
 DROP TABLE generation_leases;
 ALTER TABLE chats DROP COLUMN deleted_at;
 ALTER TABLE files DROP COLUMN deleted_at;
+`
+
+// schemaV5 区分浏览器会话与 CLI 会话：两种 token 不能互相冒用。
+// 旧会话默认按浏览器会话处理，升级后已登录的 Cookie 仍然有效。
+const schemaV5 = `
+ALTER TABLE auth_sessions ADD COLUMN scope TEXT NOT NULL DEFAULT 'web';
+CREATE INDEX idx_auth_sessions_scope_expires ON auth_sessions(scope, expires_at);
 `
 
 // ErrNotFound 用于调用方区分“没有数据”和真实错误。

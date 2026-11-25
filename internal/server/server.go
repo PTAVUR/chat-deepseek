@@ -253,11 +253,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	session, err := s.sessions.Create(
 		r.Context(),
-		user.ID,
-		tokenHash,
-		csrf,
-		r.UserAgent(),
-		clientIP(r),
+		auth.SessionParams{
+			UserID:    user.ID,
+			TokenHash: tokenHash,
+			CSRF:      csrf,
+			Scope:     auth.ScopeWeb,
+			UserAgent: r.UserAgent(),
+			IP:        clientIP(r),
+			TTL:       auth.SessionTTL,
+		},
 		s.now(),
 	)
 	if err != nil {
@@ -495,7 +499,11 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			writeAPIError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
 			return
 		}
-		session, err := s.sessions.GetByTokenHash(r.Context(), auth.HashToken(cookie.Value))
+		session, err := s.sessions.GetByTokenHash(
+			r.Context(),
+			auth.ScopeWeb,
+			auth.HashToken(cookie.Value),
+		)
 		if err != nil {
 			writeAPIError(w, http.StatusUnauthorized, "unauthorized", "登录已失效")
 			return

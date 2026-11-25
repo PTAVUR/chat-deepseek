@@ -34,7 +34,8 @@ CGO_ENABLED=0 go build -o chat-deepseek ./cmd/chat-deepseek
 --backup-dir <dir>     备份地址，默认是 data/backups（backup）
 --output <file>        备份输出文件路径（backup，覆盖默认文件名）
 --yes                  跳过恢复确认（backup restore）
---password-stdin       从标准输入读取密码（setup / user add / user reset-password）
+--username <name>      登录账户名（login）
+--password-stdin       从标准输入读取密码（setup / login / user add / user reset-password）
 ```
 
 服务面向自托管使用，默认只监听本机。需要局域网或公网访问时，改成 `--listen 0.0.0.0:8090`，并建议放在 HTTPS 反向代理后面。当前发布不提供 Docker 镜像、systemd 单元或 Web 管理页；进程由用户自己的 supervisor、tmux 或 nohup 托管。
@@ -56,6 +57,8 @@ Windows 用 `gui\.venv\Scripts\python gui\app.py`；更完整的命令见 [gui/R
 `gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。设置页的二进制目录、数据目录、备份地址保存在平台用户配置目录的 `config.gui.json`：Linux 是 `~/.config/chat-deepseek/`，macOS 是 `~/Library/Application Support/chat-deepseek/`，Windows 是 `%APPDATA%\chat-deepseek\`。监听地址、Public URL 和 API 地址写入数据目录的 `config.json`，`serve` 启动时直接读取。左下角的“恢复默认”在 Windows/Linux 回到二进制同级 `data/`、`data/backups/`，在 macOS 回到 `~/Library/Application Support/chat-deepseek/data/`；监听地址和 API 地址回到 `127.0.0.1:8090` 和官方地址。数据卡片可以立即备份、查看备份记录并从记录中恢复；恢复前必须先停止服务。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里。
 
 关闭窗口会停止由它启动的服务；外部启动的 `chat-deepseek serve` 不会被它接管。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止服务是强制结束进程；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
+
+CLI 登录上线后，GUI 的账户和备份操作暂时会提示需要登录；GUI 的登录流程是下一步，当前请先用 CLI 完成这些操作。
 
 ## 发布流水线
 
@@ -99,11 +102,39 @@ Linux 不附带预编译 GUI。PyInstaller onefile 会绑定构建机的 glibc�
 - Windows EXE 和 macOS `.app` 使用鲸鱼应用图标；Linux 从源码构建 GUI 时由程序设置窗口/任务栏图标。
 - macOS 包只做 ad-hoc 签名，没有开发者签名/公证，首次打开可能需要在 Finder 右键“打开”，或执行 `xattr -cr`。Windows 包也未签名，可能出现 SmartScreen 提示。
 
+## 命令行登录
+
+`user ...` 和 `backup ...` 需要先登录。登录态按 shell 隔离：每个终端各自 `login`，互不覆盖；固定 15 分钟后过期，不随命令续期。
+
+```sh
+./chat-deepseek login --username owner
+./chat-deepseek whoami
+./chat-deepseek logout
+```
+
+- 只有 `Admin` / `Owner` 能登录；普通 `User` 没有 CLI 管理权限。
+- `logout` 只退出当前终端，其他终端不受影响。
+- 未登录或登录过期时退出码为 `3`，权限不足为 `4`，便于脚本和后续 GUI 判断。
+- 登录态不写进 `data/`：Linux 在 `$XDG_RUNTIME_DIR/chat-deepseek/sessions/`（tmpfs），macOS 在 `$TMPDIR/chat-deepseek/sessions/`，Windows 在 `%LOCALAPPDATA%\chat-deepseek\run\sessions\`；数据库只保存 token 的 SHA-256。
+- 非交互场景用 `--password-stdin`，密码不会出现在命令行参数里。
+
+权限：
+
+| 操作 | 需要 |
+| --- | --- |
+| `setup`、`serve`、`version` | 不需要登录；`setup` 只能执行一次 |
+| `login`、`logout`、`whoami` | — |
+| `user list`、`user groups`、创建普通 User、管理普通 User | Admin 或 Owner |
+| `user grant` / `user revoke`、操作 Admin/Owner、`backup` 创建/列表/恢复 | Owner |
+
+能登录服务器的人本来就能直接读写 `chat.db` 和 `master.key`，所以 CLI 登录不是防入侵边界；它是管理规范：让授权、归属和危险操作有据可查，同时避免直接改库绕过最后一名 Owner、会话吊销等代码里的不变量。空数据目录上的首次 `backup restore` 是引导路径，不需要登录；已有实例上恢复必须由 Owner 执行。
+
 ## 账户
 
 账户和组管理只通过服务端 CLI 完成，没有公开注册。
 
 ```sh
+./chat-deepseek login --username owner
 ./chat-deepseek user add --group Admin --password-stdin alice
 ./chat-deepseek user list
 ./chat-deepseek user groups bob
@@ -114,6 +145,8 @@ Linux 不附带预编译 GUI。PyInstaller onefile 会绑定构建机的 glibc�
 ./chat-deepseek user reset-password --password-stdin alice
 ./chat-deepseek user delete --yes alice
 ```
+
+`Admin` 可以创建普通 `User`、禁用/启用/重置/删除普通 `User`，但不能指定组，也不能操作 `Admin`、`Owner`；授组和操作 `Admin`/`Owner` 需要 `Owner`。
 
 组只有 `User`、`Admin`、`Owner`。所有账户默认属于 `User`；`Admin`、`Owner` 是附加组，能力取并集。不能移除、禁用或删除最后一名活动 `Owner`。忘记密码由 CLI 重置，没有邮件或 TOTP 找回。用户名可以是 1-64 个 ASCII 字母、数字或 `. _ -`。登录后可在「系统设置 → 账户管理」修改自己的用户名、密码和头像，保存后立即生效，不需要刷新页面。
 

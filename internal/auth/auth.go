@@ -133,19 +133,35 @@ func VerifyDummy(password string) {
 	_, _ = VerifyPassword(dummyHash, password)
 }
 
-// Session 是服务端登录会话；原始 token 只存在于浏览器 Cookie 中。
+// Session 是服务端登录会话；原始 token 只存在于浏览器 Cookie 或 CLI 会话文件里。
 type Session struct {
 	ID        string
 	UserID    string
 	CSRF      string
+	Scope     SessionScope
 	CreatedAt int64
 	ExpiresAt int64
+}
+
+// SessionScope 区分浏览器会话和 CLI 会话，防止两种 token 互相冒用。
+type SessionScope string
+
+const (
+	// ScopeWeb 是浏览器登录会话。
+	ScopeWeb SessionScope = "web"
+	// ScopeCLI 是命令行登录会话。
+	ScopeCLI SessionScope = "cli"
+)
+
+// Valid 判断 scope 是否是已知取值。
+func (s SessionScope) Valid() bool {
+	return s == ScopeWeb || s == ScopeCLI
 }
 
 const (
 	// CookieName 是会话 Cookie 名。
 	CookieName = "chat_deepseek_session"
-	// SessionTTL 是会话有效期。
+	// SessionTTL 是浏览器会话有效期。
 	SessionTTL = 30 * 24 * time.Hour
 )
 
@@ -182,33 +198,47 @@ func NewSessionStore(db *sql.DB) *SessionStore {
 	return &SessionStore{db: db}
 }
 
+// SessionParams 是创建登录会话所需的字段；TTL 由调用方决定。
+type SessionParams struct {
+	UserID    string
+	TokenHash string
+	CSRF      string
+	Scope     SessionScope
+	UserAgent string
+	IP        string
+	TTL       time.Duration
+}
+
 // Create 保存会话并返回记录。
 func (s *SessionStore) Create(
 	ctx context.Context,
-	userID string,
-	tokenHash string,
-	csrf string,
-	userAgent string,
-	ip string,
+	params SessionParams,
 	now time.Time,
 ) (*Session, error) {
+	if !params.Scope.Valid() {
+		return nil, fmt.Errorf("invalid session scope %q", params.Scope)
+	}
+	if params.TTL <= 0 {
+		return nil, errors.New("auth: session ttl must be positive")
+	}
 	sessionID, err := id.New()
 	if err != nil {
 		return nil, fmt.Errorf("generate session id: %w", err)
 	}
 	created := now.UnixMilli()
-	expires := now.Add(SessionTTL).UnixMilli()
-	userAgent = truncate(userAgent, 255)
-	ip = truncate(ip, 64)
+	expires := now.Add(params.TTL).UnixMilli()
+	userAgent := truncate(params.UserAgent, 255)
+	ip := truncate(params.IP, 64)
 	if _, err := s.db.ExecContext(
 		ctx,
 		`INSERT INTO auth_sessions
-		   (id, user_id, token_hash, csrf_token, created_at, last_seen_at, expires_at, user_agent, ip)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   (id, user_id, token_hash, csrf_token, scope, created_at, last_seen_at, expires_at, user_agent, ip)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID,
-		userID,
-		tokenHash,
-		csrf,
+		params.UserID,
+		params.TokenHash,
+		params.CSRF,
+		string(params.Scope),
 		created,
 		created,
 		expires,
@@ -219,28 +249,43 @@ func (s *SessionStore) Create(
 	}
 	return &Session{
 		ID:        sessionID,
-		UserID:    userID,
-		CSRF:      csrf,
+		UserID:    params.UserID,
+		CSRF:      params.CSRF,
+		Scope:     params.Scope,
 		CreatedAt: created,
 		ExpiresAt: expires,
 	}, nil
 }
 
-// GetByTokenHash 按 token 哈希读取会话。
-func (s *SessionStore) GetByTokenHash(ctx context.Context, tokenHash string) (*Session, error) {
+// GetByTokenHash 按 token 哈希和用途读取会话。
+func (s *SessionStore) GetByTokenHash(
+	ctx context.Context,
+	scope SessionScope,
+	tokenHash string,
+) (*Session, error) {
 	var session Session
+	var storedScope string
 	err := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, user_id, csrf_token, created_at, expires_at
-		   FROM auth_sessions WHERE token_hash = ?`,
+		`SELECT id, user_id, csrf_token, scope, created_at, expires_at
+		   FROM auth_sessions WHERE token_hash = ? AND scope = ?`,
 		tokenHash,
-	).Scan(&session.ID, &session.UserID, &session.CSRF, &session.CreatedAt, &session.ExpiresAt)
+		string(scope),
+	).Scan(
+		&session.ID,
+		&session.UserID,
+		&session.CSRF,
+		&storedScope,
+		&session.CreatedAt,
+		&session.ExpiresAt,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrSessionNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query session: %w", err)
 	}
+	session.Scope = SessionScope(storedScope)
 	return &session, nil
 }
 

@@ -2,6 +2,15 @@
 
 只记录本分支相对 [chat-demo](https://github.com/deepseek-ai/chat-demo) 的变化；上游已有的聊天界面功能不重复。
 
+## 未发布
+
+### 命令行
+
+- 新增 `login`、`logout`、`whoami`：登录态按 shell 隔离，固定 15 分钟过期；token 只放在用户运行时目录，数据库保存哈希。
+- `user ...` 和 `backup ...` 现在需要登录并按组校验：`Admin` 管理普通 `User`，`Owner` 负责授组、操作 `Admin`/`Owner` 和备份恢复；未登录退出码 `3`，权限不足 `4`。
+- 认证会话增加 `scope`（schema v5），浏览器 Cookie 与 CLI token 不能互相冒用。
+- GUI 尚未适配 CLI 登录；账户和备份操作暂时需要用 CLI 完成。
+
 ## 0.1.1-official0.1.3 - 2026-11-23
 
 ### 服务端

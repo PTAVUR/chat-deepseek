@@ -79,6 +79,16 @@ func runUserAdd(args []string) error {
 	if err := account.ValidateUsername(username); err != nil {
 		return fmt.Errorf("用户名需为 1-64 个字母、数字或 . _ -: %w", err)
 	}
+	op, err := authorize(*dataDir, account.GroupAdmin)
+	if err != nil {
+		return err
+	}
+	defer op.close()
+	if len(groups) > 0 {
+		if err := op.require(account.GroupOwner); err != nil {
+			return forbidden("只有 Owner 可以指定组；Admin 只能创建普通 User")
+		}
+	}
 	password, err := readNewPassword(*passwordStdin)
 	if err != nil {
 		return err
@@ -87,13 +97,7 @@ func runUserAdd(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, db, err := openStore(*dataDir)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = db.Close() }()
-	store := account.NewStore(db)
-	user, err := store.Create(context.Background(), username, hash, groups)
+	user, err := op.accounts.Create(context.Background(), username, hash, groups)
 	if err != nil {
 		return err
 	}
@@ -108,12 +112,12 @@ func runUserList(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	_, db, err := openStore(*dataDir)
+	op, err := authorize(*dataDir, account.GroupAdmin)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = db.Close() }()
-	users, err := account.NewStore(db).List(context.Background())
+	defer op.close()
+	users, err := op.accounts.List(context.Background())
 	if err != nil {
 		return err
 	}
@@ -142,12 +146,12 @@ func runUserGroups(args []string) error {
 	if fs.NArg() != 1 {
 		return errors.New("用法：chat-deepseek user groups <username>")
 	}
-	store, closeDB, err := openAccountStore(*dataDir)
+	op, err := authorize(*dataDir, account.GroupAdmin)
 	if err != nil {
 		return err
 	}
-	defer closeDB()
-	user, err := store.GetByUsername(context.Background(), fs.Arg(0))
+	defer op.close()
+	user, err := op.accounts.GetByUsername(context.Background(), fs.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -169,25 +173,25 @@ func runUserGroup(args []string, add bool) error {
 	if !ok {
 		return fmt.Errorf("未知组 %q", fs.Arg(1))
 	}
-	store, closeDB, err := openAccountStore(*dataDir)
+	op, err := authorize(*dataDir, account.GroupOwner)
 	if err != nil {
 		return err
 	}
-	defer closeDB()
+	defer op.close()
 	ctx := context.Background()
-	user, err := store.GetByUsername(ctx, fs.Arg(0))
+	user, err := op.accounts.GetByUsername(ctx, fs.Arg(0))
 	if err != nil {
 		return err
 	}
 	if add {
-		err = store.AddGroup(ctx, user.ID, group)
+		err = op.accounts.AddGroup(ctx, user.ID, group)
 	} else {
-		err = store.RemoveGroup(ctx, user.ID, group)
+		err = op.accounts.RemoveGroup(ctx, user.ID, group)
 	}
 	if err != nil {
 		return err
 	}
-	updated, err := store.GetByID(ctx, user.ID)
+	updated, err := op.accounts.GetByID(ctx, user.ID)
 	if err != nil {
 		return err
 	}
@@ -205,17 +209,25 @@ func runUserDisabled(args []string, disabled bool) error {
 	if fs.NArg() != 1 {
 		return errors.New("用法：chat-deepseek user disable|enable <username>")
 	}
-	store, closeDB, err := openAccountStore(*dataDir)
+	op, err := authorize(*dataDir, account.GroupAdmin)
 	if err != nil {
 		return err
 	}
-	defer closeDB()
+	defer op.close()
 	ctx := context.Background()
-	user, err := store.GetByUsername(ctx, fs.Arg(0))
+	user, err := op.accounts.GetByUsername(ctx, fs.Arg(0))
 	if err != nil {
 		return err
 	}
-	if err := store.SetDisabled(ctx, user.ID, disabled); err != nil {
+	if err := op.canOperate(user); err != nil {
+		return err
+	}
+	if disabled {
+		if err := op.requireNotSelf(user, "禁用"); err != nil {
+			return err
+		}
+	}
+	if err := op.accounts.SetDisabled(ctx, user.ID, disabled); err != nil {
 		return err
 	}
 	state := "已启用"
@@ -237,6 +249,19 @@ func runUserResetPassword(args []string) error {
 	if fs.NArg() != 1 {
 		return errors.New("用法：chat-deepseek user reset-password <username>")
 	}
+	op, err := authorize(*dataDir, account.GroupAdmin)
+	if err != nil {
+		return err
+	}
+	defer op.close()
+	ctx := context.Background()
+	user, err := op.accounts.GetByUsername(ctx, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := op.canOperate(user); err != nil {
+		return err
+	}
 	password, err := readNewPassword(*passwordStdin)
 	if err != nil {
 		return err
@@ -245,21 +270,10 @@ func runUserResetPassword(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, db, err := openStore(*dataDir)
-	if err != nil {
+	if err := op.accounts.SetPassword(ctx, user.ID, hash); err != nil {
 		return err
 	}
-	defer func() { _ = db.Close() }()
-	ctx := context.Background()
-	store := account.NewStore(db)
-	user, err := store.GetByUsername(ctx, fs.Arg(0))
-	if err != nil {
-		return err
-	}
-	if err := store.SetPassword(ctx, user.ID, hash); err != nil {
-		return err
-	}
-	if err := auth.NewSessionStore(db).DeleteByUser(ctx, user.ID); err != nil {
+	if err := op.sessions.DeleteByUser(ctx, user.ID); err != nil {
 		return err
 	}
 	fmt.Printf("已重置 %s 的密码，并吊销其全部登录会话\n", user.Username)
@@ -277,14 +291,20 @@ func runUserDelete(args []string) error {
 	if fs.NArg() != 1 {
 		return errors.New("用法：chat-deepseek user delete [--yes] <username>")
 	}
-	store, closeDB, err := openAccountStore(*dataDir)
+	op, err := authorize(*dataDir, account.GroupAdmin)
 	if err != nil {
 		return err
 	}
-	defer closeDB()
+	defer op.close()
 	ctx := context.Background()
-	user, err := store.GetByUsername(ctx, fs.Arg(0))
+	user, err := op.accounts.GetByUsername(ctx, fs.Arg(0))
 	if err != nil {
+		return err
+	}
+	if err := op.canOperate(user); err != nil {
+		return err
+	}
+	if err := op.requireNotSelf(user, "删除"); err != nil {
 		return err
 	}
 	if !*yes {
@@ -299,7 +319,7 @@ func runUserDelete(args []string) error {
 			return errors.New("用户名不匹配，已取消")
 		}
 	}
-	if err := store.Delete(ctx, user.ID); err != nil {
+	if err := op.accounts.Delete(ctx, user.ID); err != nil {
 		return err
 	}
 	fmt.Printf("已删除账户 %s；其附件文件不会自动删除，留在数据目录中\n", user.Username)
@@ -312,12 +332,4 @@ func formatGroups(groups []account.Group) string {
 		items = append(items, string(group))
 	}
 	return strings.Join(items, ",")
-}
-
-func openAccountStore(dataDir string) (*account.Store, func(), error) {
-	_, db, err := openStore(dataDir)
-	if err != nil {
-		return nil, nil, err
-	}
-	return account.NewStore(db), func() { _ = db.Close() }, nil
 }

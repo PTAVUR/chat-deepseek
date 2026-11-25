@@ -3,7 +3,6 @@ package cli
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -40,6 +39,12 @@ func Run(args []string) error {
 		return runServe(args[1:])
 	case "user":
 		return runUser(args[1:])
+	case "login":
+		return runLogin(args[1:])
+	case "logout":
+		return runLogout(args[1:])
+	case "whoami":
+		return runWhoami(args[1:])
 	case "backup":
 		return runBackup(args[1:])
 	case "version", "--version", "-v":
@@ -59,6 +64,9 @@ func printUsage() {
 用法：
   chat-deepseek                 首次运行 setup，之后启动服务并打开浏览器
   chat-deepseek setup           创建第一个 Owner
+  chat-deepseek login           登录 CLI，15 分钟后自动过期
+  chat-deepseek logout          退出当前终端的登录
+  chat-deepseek whoami          查看当前终端的登录身份
   chat-deepseek serve           启动 HTTP 服务
   chat-deepseek backup          停止服务后把 data/ 打包成 ZIP（默认写到 data/backups/）
   chat-deepseek backup list     列出备份地址里的 ZIP
@@ -75,10 +83,12 @@ func printUsage() {
   --backup-dir <dir>            备份地址，默认是 data/backups（backup）
   --output <file>               备份输出文件路径（backup，覆盖默认文件名）
   --yes                         跳过确认（backup restore）
-  --password-stdin              从标准输入读取密码（setup/user add/user reset-password）
+  --username <name>             登录账户名（login）
+  --password-stdin              从标准输入读取密码（setup/login/user add/user reset-password）
 
 首次使用：
   ./chat-deepseek setup --username owner
+  ./chat-deepseek login --username owner
   ./chat-deepseek serve
 `)
 }
@@ -277,18 +287,6 @@ func runServe(args []string) error {
 		return fmt.Errorf("HTTP 服务退出: %w", err)
 	}
 	return nil
-}
-
-func openStore(dataDir string) (string, *sql.DB, error) {
-	dir, err := config.ResolveDataDir(dataDir)
-	if err != nil {
-		return "", nil, err
-	}
-	db, err := database.Open(dir)
-	if err != nil {
-		return "", nil, err
-	}
-	return dir, db, nil
 }
 
 func browserURL(cfg config.Config, listenAddr string) string {

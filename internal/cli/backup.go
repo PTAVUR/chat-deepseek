@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/elegantgx/chat-deepseek/internal/account"
 	"github.com/elegantgx/chat-deepseek/internal/backup"
 	"github.com/elegantgx/chat-deepseek/internal/config"
 )
@@ -44,10 +45,12 @@ func runBackupCreate(args []string) error {
 	if fs.NArg() != 0 {
 		return errors.New("backup 不接受位置参数")
 	}
-	dir, err := config.ResolveDataDir(*dataDir)
+	op, err := authorize(*dataDir, account.GroupOwner)
 	if err != nil {
 		return err
 	}
+	op.close()
+	dir := op.dataDir
 	path, err := backup.Create(dir, backupDirValue(dir, *backupDir), *output)
 	if err != nil {
 		return err
@@ -67,10 +70,12 @@ func runBackupList(args []string) error {
 	if fs.NArg() != 0 {
 		return errors.New("backup list 不接受位置参数")
 	}
-	dir, err := config.ResolveDataDir(*dataDir)
+	op, err := authorize(*dataDir, account.GroupOwner)
 	if err != nil {
 		return err
 	}
+	op.close()
+	dir := op.dataDir
 	archives, err := backup.List(backupDirValue(dir, *backupDir))
 	if err != nil {
 		return err
@@ -103,6 +108,17 @@ func runBackupRestore(args []string) error {
 	if err != nil {
 		return err
 	}
+	// 空数据目录恢复是引导路径（备份里就有账户），没有可登录的身份；
+	// 覆盖已有实例则必须是 Owner。
+	if _, statErr := os.Stat(config.DatabasePath(dir)); statErr == nil {
+		op, err := authorize(*dataDir, account.GroupOwner)
+		if err != nil {
+			return err
+		}
+		op.close()
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return fmt.Errorf("检查数据库文件: %w", statErr)
+	}
 	name := fs.Arg(0)
 	if !*yes {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
@@ -120,7 +136,10 @@ func runBackupRestore(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("已恢复备份 %s；请重新启动服务\n", filepath.Base(archivePath))
+	if _, host, ok := findSession(); ok {
+		removeSession(host)
+	}
+	fmt.Printf("已恢复备份 %s；登录态已清除，请重新 login 后启动服务\n", filepath.Base(archivePath))
 	return nil
 }
 
