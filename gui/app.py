@@ -53,6 +53,7 @@ import dialogs
 import gui_config
 import parsing
 import server_config
+import service_plan
 import theme
 import widgets
 
@@ -251,12 +252,24 @@ class MainWindow(QMainWindow):
         self.stop_button.setMinimumWidth(92)
         self.stop_button.clicked.connect(self.stop_server)
         actions.addWidget(self.stop_button)
+        self.restart_button = widgets.button("重启服务", "secondary", height=36)
+        self.restart_button.setMinimumWidth(92)
+        self.restart_button.setToolTip("重启 systemd 用户服务")
+        self.restart_button.clicked.connect(self.restart_server)
+        self.restart_button.hide()
+        actions.addWidget(self.restart_button)
         self.install_button = widgets.button("安装服务", "secondary", height=36)
         self.install_button.setMinimumWidth(92)
-        self.install_button.setToolTip("安装 systemd 用户服务并设置开机自启")
+        self.install_button.setToolTip("安装 systemd 用户服务")
         self.install_button.clicked.connect(self.install_service)
         self.install_button.hide()
         actions.addWidget(self.install_button)
+        self.update_button = widgets.button("更新服务", "secondary", height=36)
+        self.update_button.setMinimumWidth(92)
+        self.update_button.setToolTip("按当前二进制和数据目录重写 systemd unit")
+        self.update_button.clicked.connect(self.update_service)
+        self.update_button.hide()
+        actions.addWidget(self.update_button)
         self.uninstall_button = widgets.button("卸载服务", "secondary", height=36)
         self.uninstall_button.setMinimumWidth(92)
         self.uninstall_button.setToolTip("停止并删除 systemd unit，不删除数据")
@@ -272,15 +285,39 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.auto_switch, 0, Qt.AlignmentFlag.AlignVCenter)
         card.body.addLayout(actions)
 
-        strip = widgets.Panel(radius=20, background="card_alt", border=None)
-        strip.setFixedHeight(40)
-        strip_row = QHBoxLayout(strip)
-        strip_row.setContentsMargins(12, 0, 12, 0)
-        strip_row.setSpacing(10)
-        strip_row.addWidget(widgets.label("数据目录", 11, 500, "muted"))
+        self.info_strip = widgets.Panel(radius=20, background="card_alt", border=None)
+        self.info_strip.setFixedHeight(40)
+        info_column = QVBoxLayout(self.info_strip)
+        info_column.setContentsMargins(12, 6, 12, 6)
+        info_column.setSpacing(2)
+
+        data_row = QHBoxLayout()
+        data_row.setSpacing(10)
+        data_row.addWidget(widgets.label("数据目录", 11, 500, "muted"))
         self.data_summary = widgets.label("", 12)
-        strip_row.addWidget(self.data_summary, 1)
-        card.body.addWidget(strip)
+        data_row.addWidget(self.data_summary, 1)
+        info_column.addLayout(data_row)
+
+        self.unit_row = QWidget()
+        unit_row = QHBoxLayout(self.unit_row)
+        unit_row.setContentsMargins(0, 0, 0, 0)
+        unit_row.setSpacing(10)
+        unit_row.addWidget(widgets.label("systemd unit", 11, 500, "muted"))
+        self.unit_summary = widgets.ElidedLabel("", 12)
+        unit_row.addWidget(self.unit_summary, 1)
+        self.enabled_badge = widgets.StatusBadge("", "muted")
+        self.enabled_badge.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, False
+        )
+        unit_row.addWidget(self.enabled_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.linger_badge = widgets.StatusBadge("", "muted")
+        self.linger_badge.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, False
+        )
+        unit_row.addWidget(self.linger_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.unit_row.hide()
+        info_column.addWidget(self.unit_row)
+        card.body.addWidget(self.info_strip)
         self._update_data_summary()
 
         outer.addWidget(card)
@@ -985,41 +1022,60 @@ class MainWindow(QMainWindow):
     def _update_service_ui(self) -> None:
         if not hasattr(self, "status_pill"):
             return
+        info = self.info
+        self._update_service_strip(info)
         if self.server is not None and self.server.running:
             # serve 日志会更新监听地址和运行状态。
             return
-        info = self.info
         if info is None:
             self._set_status("尚未启动", "muted", "正在读取服务状态…")
             return
         if info.service_installed:
             if info.service_active:
-                detail = "systemd 用户服务"
-                if info.service_enabled:
-                    detail += " · 开机自启"
-                if not info.service_linger:
-                    detail += " · linger 未开启"
-                self._set_status("运行中", "success", detail)
+                self._set_status("运行中", "success", "systemd 用户服务")
             else:
-                detail = "systemd 用户服务 · 已安装"
-                if not info.service_enabled:
-                    detail += " · 未设置开机自启"
-                self._set_status("已停止", "muted", detail)
-            tooltip = f"unit：{info.service_unit}" if info.service_unit else ""
-            if info.service_supported and not info.service_linger:
-                tooltip += (
-                    "\n未开启 linger：注销后服务会停止。"
-                    "执行 loginctl enable-linger <user>。"
-                )
-            self.status_detail.setToolTip(tooltip.strip())
+                self._set_status("已停止", "muted", "systemd 用户服务 · 已安装")
             return
         if info.service_supported:
-            self._set_status("未运行", "muted", "会话模式（未安装 systemd 服务）")
+            self._set_status("未运行", "muted", "未安装 systemd 服务（前台运行）")
         else:
             self._set_status(
-                "未运行", "muted", "会话模式（当前平台不支持 systemd 服务）"
+                "未运行", "muted", "当前平台不支持 systemd 服务（前台运行）"
             )
-        self.status_detail.setToolTip("")
+
+    def _update_service_strip(self, info: parsing.Info | None) -> None:
+        """把 `info` 的 service_* 字段摊在卡片上，别只藏在 tooltip 里。"""
+        if not hasattr(self, "info_strip"):
+            return
+        if info is None or not info.service_installed:
+            self.unit_row.hide()
+            self.info_strip.setFixedHeight(40)
+            return
+        self.unit_row.show()
+        self.info_strip.setFixedHeight(56)
+        self.unit_summary.setText(info.service_unit or "未找到 unit 路径")
+        self.enabled_badge.set_state(
+            "开机自启" if info.service_enabled else "未设置开机自启",
+            "success" if info.service_enabled else "muted",
+        )
+        self.enabled_badge.setToolTip(
+            "已设置开机自启；对应 service install --enable"
+            if info.service_enabled
+            else "尚未设置开机自启；可在“安装服务”里勾选"
+        )
+        self.linger_badge.set_state(
+            "linger 已开启" if info.service_linger else "linger 未开启",
+            "success" if info.service_linger else "warning",
+        )
+        self.linger_badge.setToolTip(
+            "注销后服务继续运行"
+            if info.service_linger
+            else "未开启 linger：注销后服务会停止。"
+            "以该用户执行 loginctl enable-linger <user>"
+        )
+        self.info_strip.setToolTip(
+            "systemd unit：%s" % (info.service_unit or "未知")
+        )
 
     # ---- 账户 ---------------------------------------------------------
 
@@ -1146,7 +1202,7 @@ class MainWindow(QMainWindow):
         self.setup_button = None
         self.user_count.setText("")
         self._render_empty(
-            widgets.LockGlyph(44),
+            widgets.LockGlyph(40),
             "登录后管理账户",
             "Admin 或 Owner 登录后可查看和管理账户。",
             "登录",
@@ -1184,8 +1240,9 @@ class MainWindow(QMainWindow):
     ) -> None:
         empty = QWidget()
         column = QVBoxLayout(empty)
-        column.setContentsMargins(14, 8, 14, 8)
-        column.setSpacing(6)
+        # 窗口最小时账户卡片会被服务卡片压缩；这里收紧一点，避免登录按钮被裁掉。
+        column.setContentsMargins(14, 4, 14, 4)
+        column.setSpacing(5)
         column.addStretch(1)
         column.addWidget(glyph, 0, Qt.AlignmentFlag.AlignHCenter)
         title = widgets.label(title_text, 15, 600)
@@ -1282,9 +1339,8 @@ class MainWindow(QMainWindow):
         owner = identity is not None and identity.is_owner
 
         child_mode = not self.service_installed
-        self.start_button.setText("临时启动" if self.service_supported and child_mode else "启动服务")
         self.start_button.setToolTip(
-            "以当前窗口启动前台进程，关闭窗口会停止"
+            "以前台进程启动，关闭窗口会停止"
             if child_mode
             else "通过 systemd 用户服务启动"
         )
@@ -1292,13 +1348,33 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(
             running and not self.server_stopping and not busy
         )
+        self.restart_button.setVisible(
+            self.service_supported and self.service_installed
+        )
+        self.restart_button.setEnabled(
+            not busy and (self.service_active or child_running)
+        )
+        self.restart_button.setToolTip(
+            "重启 systemd 用户服务"
+            if self.service_active or child_running
+            else "服务没有在运行，先用“启动服务”"
+        )
         self.open_button.setEnabled(running and not busy)
         self.install_button.setVisible(
             self.service_supported and not self.service_installed
         )
         self.install_button.setEnabled(not busy and self.data_ready)
         self.install_button.setToolTip(
-            "" if self.data_ready else "先初始化数据目录"
+            "安装 systemd 用户服务" if self.data_ready else "先初始化数据目录"
+        )
+        self.update_button.setVisible(
+            self.service_supported and self.service_installed
+        )
+        self.update_button.setEnabled(not busy and self.data_ready)
+        self.update_button.setToolTip(
+            "按当前二进制和数据目录重写 systemd unit"
+            if self.data_ready
+            else "先初始化数据目录"
         )
         self.uninstall_button.setVisible(
             self.service_supported and self.service_installed
@@ -1569,20 +1645,32 @@ class MainWindow(QMainWindow):
             self._toast("服务已经在运行")
             return
         # 已安装 systemd 服务时不再让 GUI 进程抢占同一端口。
-        if self.server is not None and self.server.running:
-            self.server_stopping = True
-            self.server.stop(wait=True, timeout=5)
-            self.server = None
-            self.server_url = None
-            self.server_address = None
+        self._stop_foreground_session()
         self.auto_opened = False
         self._execute(
             ["service", "start"],
             on_success=lambda _result: self._after_service_started(),
         )
 
-    def _after_service_started(self) -> None:
-        self._toast("服务已启动")
+    def _stop_foreground_session(self) -> None:
+        if self.server is None or not self.server.running:
+            return
+        self.server_stopping = True
+        self.server.stop(wait=True, timeout=5)
+        self.server = None
+        self.server_url = None
+        self.server_address = None
+        self.auto_opened = False
+
+    def _after_service_started(self, warnings: str = "") -> None:
+        self.service_installed = True
+        self.service_active = True
+        if warnings and "linger" in warnings:
+            self._toast("服务已启动；未开启 linger，注销后会停止")
+        else:
+            self._toast("服务已启动")
+        self._update_service_ui()
+        self._update_buttons()
         self._load_info(then=self._open_after_service_start)
 
     def _open_after_service_start(self) -> None:
@@ -1648,12 +1736,7 @@ class MainWindow(QMainWindow):
         if not self.service_active and not child_running:
             self._toast("服务没有在运行", error=True)
             return
-        if child_running:
-            self.server_stopping = True
-            self.server.stop(wait=True, timeout=5)
-            self.server = None
-            self.server_url = None
-            self.server_address = None
+        self._stop_foreground_session()
         self._set_status("正在停止…", "warning", "正在停止 systemd 服务")
         self._update_buttons()
         self._execute(
@@ -1663,42 +1746,169 @@ class MainWindow(QMainWindow):
 
     def _after_service_stopped(self) -> None:
         self.server_url = None
+        self.service_active = False
         self._toast("服务已停止")
         self._load_info()
 
+    def restart_server(self) -> None:
+        if not self.service_installed:
+            self._toast("先安装 systemd 服务", error=True)
+            return
+        child_running = self.server is not None and self.server.running
+        if not self.service_active and not child_running:
+            self._toast("服务没有在运行", error=True)
+            return
+        self._stop_foreground_session()
+        self._set_status("正在重启…", "warning", "正在重启 systemd 服务")
+        self._update_buttons()
+        self._execute(
+            ["service", "restart"],
+            on_success=lambda _result: self._after_service_restarted(),
+        )
+
+    def _after_service_restarted(self) -> None:
+        self.service_installed = True
+        self.service_active = True
+        self._toast("服务已重启")
+        self._update_service_ui()
+        self._update_buttons()
+        self._load_info()
+
     def install_service(self) -> None:
+        if not self.service_supported:
+            self._toast("当前平台不支持 systemd 服务", error=True)
+            return
         if not self.data_ready:
             self._toast("先初始化数据目录，再安装服务", error=True)
             return
-        if not dialogs.ask_confirm(
-            self,
-            "安装服务",
-            "安装为 systemd 用户服务并设置开机自启？\n\n"
-            "安装后不会立即启动；注销后要保住服务还需要开启 linger。",
-        ):
+        try:
+            binary = self._binary()
+        except RuntimeError as exc:
+            self._error("chat-deepseek", str(exc))
             return
+        raw_data_dir = self.data_dir.strip() or self.defaults["data_dir"]
+        data_dir = str(Path(os.path.expanduser(raw_data_dir)).resolve())
+        dialog = dialogs.InstallServiceDialog(
+            self,
+            binary=binary,
+            data_dir=data_dir,
+            unit_path=self.service_unit or service_plan.unit_path(),
+            linger=self.service_linger,
+            username=service_plan.current_user(),
+        )
+        dialog.exec_modal()
+        if not isinstance(dialog.value, dict):
+            return
+        options = dialog.value
         self._execute(
-            ["service", "install", "--enable", *self._data_args()],
-            on_success=self._after_service_install,
+            service_plan.install_args(
+                data_dir,
+                enable=options["enable"],
+                force=options.get("force", False),
+            ),
+            on_success=lambda result: self._after_service_install(result, options),
         )
 
-    def _after_service_install(self, result: cli.CommandResult) -> None:
-        details = result.stderr.strip()
-        if details:
-            self._error(
-                "服务已安装",
-                "已写入 systemd unit 并设置开机自启；服务尚未启动。",
-                details,
+    def _after_service_install(
+        self, result: cli.CommandResult, options: dict[str, bool]
+    ) -> None:
+        warnings = result.stderr.strip()
+        # 安装成功后立刻更新本地状态，避免 info 返回前又走前台启动。
+        self.service_installed = True
+        self.service_active = False
+        self.service_enabled = options.get("enable", False)
+        self._update_service_ui()
+        self._update_buttons()
+        if options.get("start"):
+            self._stop_foreground_session()
+            self._execute(
+                ["service", "start"],
+                on_success=lambda _result: self._after_service_started(warnings),
             )
+            return
+        message = "已写入 systemd unit 并重新加载；服务尚未启动。"
+        if warnings:
+            dialogs.show_message(self, "服务已安装", message, warnings)
         else:
             self._toast("服务已安装，尚未启动")
+        self._load_info()
+
+    def update_service(self) -> None:
+        if not self.service_installed:
+            return
+        if not self.data_ready:
+            self._toast("先初始化数据目录，再更新服务", error=True)
+            return
+        try:
+            binary = self._binary()
+        except RuntimeError as exc:
+            self._error("chat-deepseek", str(exc))
+            return
+        raw_data_dir = self.data_dir.strip() or self.defaults["data_dir"]
+        data_dir = str(Path(os.path.expanduser(raw_data_dir)).resolve())
+        dialog = dialogs.InstallServiceDialog(
+            self,
+            binary=binary,
+            data_dir=data_dir,
+            unit_path=self.service_unit or service_plan.unit_path(),
+            linger=self.service_linger,
+            username=service_plan.current_user(),
+            installed=True,
+            enabled=self.service_enabled,
+            active=self.service_active,
+        )
+        dialog.exec_modal()
+        if not isinstance(dialog.value, dict):
+            return
+        options = dialog.value
+        self._execute(
+            service_plan.install_args(
+                data_dir,
+                enable=self.service_enabled,
+                force=True,
+            ),
+            on_success=lambda result: self._after_service_update(result, options),
+        )
+
+    def _after_service_update(
+        self, result: cli.CommandResult, options: dict[str, bool]
+    ) -> None:
+        warnings = result.stderr.strip()
+        was_active = self.service_active
+        self.service_installed = True
+        self.service_enabled = bool(options.get("enable"))
+        self._update_service_ui()
+        self._update_buttons()
+        if options.get("start"):
+            self._stop_foreground_session()
+            if was_active:
+                self._execute(
+                    ["service", "restart"],
+                    on_success=lambda _result: self._after_service_restarted(),
+                )
+            else:
+                self._execute(
+                    ["service", "start"],
+                    on_success=lambda _result: self._after_service_started(warnings),
+                )
+            return
+        message = "systemd unit 已更新。"
+        if was_active:
+            message += "当前进程仍在运行旧配置，重启服务后生效。"
+        else:
+            message += "服务尚未启动。"
+        if warnings:
+            dialogs.show_message(self, "服务已更新", message, warnings)
+        else:
+            self._toast(message)
         self._load_info()
 
     def uninstall_service(self) -> None:
         if not dialogs.ask_confirm(
             self,
             "卸载服务",
-            "停止并删除 systemd 用户服务？数据目录不会被删除。",
+            "停止并删除 systemd 用户服务（unit 文件），同时取消开机自启？\n\n"
+            "数据目录不会被删除；linger 设置保持不变。",
             danger=True,
         ):
             return
@@ -1709,7 +1919,12 @@ class MainWindow(QMainWindow):
 
     def _after_service_uninstall(self) -> None:
         self.server_url = None
-        self._toast("服务已卸载")
+        self.service_installed = False
+        self.service_active = False
+        self.service_enabled = False
+        self._update_service_ui()
+        self._update_buttons()
+        self._toast("服务已卸载，数据目录未改动")
         self._load_info()
 
     def open_page(self) -> None:

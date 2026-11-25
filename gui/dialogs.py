@@ -1,11 +1,11 @@
-"""Qt 对话框：账户、密码、组、确认、消息与设置。"""
+"""Qt 对话框：账户、密码、组、确认、消息、设置与服务安装。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtGui import QFontDatabase, QGuiApplication
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 import cli
 import parsing
 import server_config
+import service_plan
 import widgets
 
 GROUPS = ("User", "Admin", "Owner")
@@ -592,6 +593,200 @@ class SettingsDialog(BaseDialog):
             "listen": listen,
             "public_url": public_url,
             "api_origin": api_origin or server_config.DEFAULT_API_ORIGIN,
+        }
+        self.accept()
+
+
+class InstallServiceDialog(BaseDialog):
+    """安装 systemd 用户服务：选项与 `service install` 对齐。
+
+    GUI 只能安装用户级服务；系统级需要 root，这里只生成命令供用户复制，
+    不在 GUI 里提权。
+    """
+
+    def __init__(
+        self,
+        parent: QWidget,
+        *,
+        binary: str,
+        data_dir: str,
+        unit_path: str,
+        linger: bool,
+        username: str,
+        installed: bool = False,
+        enabled: bool = False,
+        active: bool = False,
+    ) -> None:
+        title = "更新服务" if installed else "安装服务"
+        super().__init__(parent, title, 700)
+        self.binary = binary
+        self.data_dir = data_dir
+        self.username = username or "<user>"
+        self.installed = installed
+        self.enabled = enabled
+        if installed:
+            self._description(
+                "按当前二进制和数据目录重写 systemd unit（--force），"
+                "保留开机自启设置；不会改动数据目录。"
+            )
+        else:
+            self._description(
+                "把 chat-deepseek 注册为 systemd 用户服务：写入 unit 并重新加载 "
+                "systemd，不会改动数据目录。"
+            )
+
+        facts = widgets.Panel(radius=16, background="card_alt", border=None)
+        grid = QGridLayout(facts)
+        grid.setContentsMargins(16, 12, 16, 12)
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(8)
+        grid.setColumnStretch(1, 1)
+        rows = [
+            ("运行范围", "当前用户（systemd --user）"),
+            ("unit 文件", unit_path),
+            ("可执行文件", binary),
+            ("数据目录", data_dir),
+        ]
+        if installed:
+            rows.append(
+                (
+                    "开机自启",
+                    "已开启（更新时保留）" if enabled else "未开启（更新时保留）",
+                )
+            )
+        for row, (caption, value) in enumerate(rows):
+            grid.addWidget(widgets.label(caption, 11, 500, "muted"), row, 0)
+            text = widgets.ElidedLabel(value, 12, 400, "text")
+            text.setMinimumWidth(260)
+            text.setToolTip(value)
+            grid.addWidget(text, row, 1)
+        self._root.addWidget(facts)
+
+        options = QVBoxLayout()
+        options.setContentsMargins(0, 2, 0, 0)
+        options.setSpacing(10)
+        self.enable = None
+        if not installed:
+            self.enable = widgets.SwitchRow("开机自启", True)
+            self.enable.setToolTip("登录后自动启动；对应 service install --enable")
+            options.addWidget(self.enable)
+            start_label = "安装后立即启动"
+        elif active:
+            start_label = "更新后重启服务"
+        else:
+            start_label = "更新后启动服务"
+        self.start_now = widgets.SwitchRow(start_label, True)
+        self.start_now.setToolTip(
+            "完成后执行 service start / restart；会先停止本窗口启动的前台进程"
+        )
+        options.addWidget(self.start_now)
+        self._root.addLayout(options)
+
+        hints = widgets.Panel(radius=16, background="card_alt", border=None)
+        hint_rows = QVBoxLayout(hints)
+        hint_rows.setContentsMargins(16, 10, 16, 10)
+        hint_rows.setSpacing(8)
+
+        linger_row = QHBoxLayout()
+        linger_row.setSpacing(8)
+        linger_row.addWidget(widgets.label("linger", 11, 500, "muted"))
+        linger_state = (
+            "已开启：注销后服务继续运行"
+            if linger
+            else "未开启：注销后服务会停止"
+        )
+        linger_row.addWidget(widgets.label(linger_state, 11, 400, "muted"), 1)
+        if not linger:
+            copy_linger = widgets.button("复制命令", "ghost", height=26, small=True)
+            command = service_plan.linger_command(self.username)
+            copy_linger.setToolTip(command)
+            copy_linger.clicked.connect(
+                lambda _checked=False, command=command, button=copy_linger: self._copy(
+                    command, button
+                )
+            )
+            linger_row.addWidget(copy_linger)
+        hint_rows.addLayout(linger_row)
+
+        system_row = QHBoxLayout()
+        system_row.setSpacing(8)
+        system_row.addWidget(widgets.label("系统级", 11, 500, "muted"))
+        self.system_hint = widgets.ElidedLabel(
+            self._system_display(), 11, 400, "muted"
+        )
+        self.system_hint.setMinimumWidth(200)
+        self.system_hint.setToolTip(
+            "需要 root；GUI 不提权，复制完整命令到终端执行。\n"
+            + self._system_command()
+        )
+        system_row.addWidget(self.system_hint, 1)
+        copy_system = widgets.button("复制命令", "ghost", height=26, small=True)
+        copy_system.setToolTip(self._system_command())
+        copy_system.clicked.connect(
+            lambda _checked=False, button=copy_system: self._copy(
+                self._system_command(), button
+            )
+        )
+        system_row.addWidget(copy_system)
+        hint_rows.addLayout(system_row)
+        self._root.addWidget(hints)
+
+        if self.enable is not None:
+            self.enable.switch.toggled.connect(
+                lambda _checked=False: self._refresh_system_command(copy_system)
+            )
+        self._root.addWidget(self._error_label())
+        self._root.addStretch(1)
+        self._buttons("更新" if installed else "安装", self._ok)
+
+    def _system_command(self) -> str:
+        enable = (
+            self.enable.isChecked() if self.enable is not None else self.enabled
+        )
+        return service_plan.system_install_command(
+            self.binary,
+            self.data_dir,
+            self.username,
+            enable=enable,
+        )
+
+    def _system_display(self) -> str:
+        enable = (
+            self.enable.isChecked() if self.enable is not None else self.enabled
+        )
+        parts = [
+            "service",
+            "install",
+            "--system",
+            "--run-as",
+            self.username,
+            "--data-dir",
+            "<数据目录>",
+        ]
+        if enable:
+            parts.append("--enable")
+        return " ".join(parts)
+
+    def _refresh_system_command(self, button: widgets.ActionButton) -> None:
+        # 开机自启开关变化时同步展示与 tooltip，避免复制的命令和界面不一致。
+        command = self._system_command()
+        button.setToolTip(command)
+        self.system_hint.setText(self._system_display())
+        self.system_hint.setToolTip(
+            "需要 root；GUI 不提权，复制完整命令到终端执行。\n" + command
+        )
+
+    def _copy(self, text: str, button: widgets.ActionButton) -> None:
+        QGuiApplication.clipboard().setText(text)
+        button.setText("已复制")
+
+    def _ok(self) -> None:
+        self.value = {
+            "enable": (
+                self.enable.isChecked() if self.enable is not None else self.enabled
+            ),
+            "start": self.start_now.isChecked(),
+            "force": self.installed,
         }
         self.accept()
 

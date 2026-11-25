@@ -16,9 +16,10 @@
 
 - `config.gui.json` 升级到 v2（`version`、`connection`、`local{binary_dir,data_dir,username}`）；旧版顶层字段自动迁移，`backup_dir` 改由 `config set backup_dir` 写入 `config.json`。
 - 设置页和服务状态改用 `info` / `config set`，GUI 不再直接读写 `data/config.json`；监听地址、Public URL、API 地址和备份地址保存后由 `serve` / `backup` 读取。
-- Linux + systemd 增加服务卡片：显示安装、运行、开机自启和 linger 状态，支持 `service install --enable`、启动、停止、卸载；未安装时保留前台会话模式，关闭 GUI 不会停止 systemd 服务。
+- Linux + systemd 增加服务卡片：显示 unit、运行、开机自启和 linger 状态，支持启动、停止、重启、安装、更新和卸载；未安装时保留前台会话模式，关闭 GUI 不会停止 systemd 服务。
+- 安装服务改为对话框：显示 unit 路径、可执行文件和数据目录，可选开机自启和安装后立即启动；提供 linger 与系统级安装命令的复制按钮。更新服务用 `service install --force` 按当前路径重写 unit。
 - Windows/macOS 不支持 systemd，继续使用会话模式；常驻交给平台 supervisor。
-- GUI 测试增加到 80 个，新增 v1→v2 迁移、`info` 解析、设置写 `config.json` 和 fake systemd 服务流程验证。
+- GUI 测试增加到 86 个，新增 v1→v2 迁移、`info` 解析、设置写 `config.json`、service 命令拼装和 fake systemd 服务流程验证。
 
 ## 0.1.3-official0.1.4 - 2026-11-25
 

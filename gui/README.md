@@ -6,7 +6,7 @@
 
 ## 登录与权限
 
-- 不登录也能启动、停止服务和改设置；账户区显示锁图标，备份区提示“登录后查看备份记录”。
+- 不登录也能启动、停止、重启、安装和更新服务，以及改设置；账户区显示锁图标，备份区提示“登录后查看备份记录”。
 - 点击“登录”、刷新、添加账户或任一备份按钮都会弹出登录框；登录通过 CLI `login` 完成，密码只经 stdin 传给子进程。
 - 登录态绑定当前 GUI 进程，有效期 15 分钟；关闭窗口时会自动执行 `logout`。重新打开 GUI 需要重新登录。
 - 只有 Admin 和 Owner 可以登录；`User` 账户会被 CLI 拒绝。Owner 多出授组、备份和操作其他 Owner 的能力。
@@ -15,9 +15,11 @@
 
 ## 服务管理
 
-- Linux 且 systemd 可用时，服务卡片会显示 systemd 用户服务的安装、运行和开机自启状态；可以安装、启动、停止、卸载。
-- 未安装 systemd 服务时，“临时启动”走原来的前台 `serve` 子进程，关闭窗口会停止；安装后启动/停止改走 `service start` / `service stop`，关闭窗口不会停止 systemd 服务。
-- “安装服务”会执行 `service install --enable`：只写 unit 并设置开机自启，不立即启动。未开启 linger 时，注销后服务会停止，界面会显示提示；需要常驻时手动执行 `loginctl enable-linger <user>`。
+- Linux 且 systemd 可用时，服务卡片会显示 systemd 用户服务的 unit、运行、开机自启和 linger 状态；可以启动、停止、重启、安装、更新和卸载。
+- 未安装 systemd 服务时，“启动服务”走原来的前台 `serve` 子进程，关闭窗口会停止；安装后启动/停止/重启改走 `service start` / `service stop` / `service restart`，关闭窗口不会停止 systemd 服务。
+- “安装服务”打开对话框，显示 unit 路径、可执行文件和数据目录，可以选择“开机自启”（`service install --enable`）和“安装后立即启动”（`service start`）；安装本身只写 unit 和 `daemon-reload`。未开启 linger 时注销后服务会停止，对话框提供 `loginctl enable-linger <user>` 的复制按钮。
+- 系统级安装需要 root，GUI 不提权；对话框里提供完整的 `service install --system --run-as <user> --data-dir <dir>` 命令供复制到终端执行。
+- “更新服务”按当前二进制和数据目录重写 unit（`service install --force`），保留开机自启设置，可选更新后启动或重启。
 - Windows/macOS 和没有 systemd 的 Linux 不支持 `service`，继续使用前台会话模式；常驻请用任务计划程序/NSSM、LaunchAgent 或 tmux/nohup。
 
 ## 安装与运行
@@ -50,8 +52,9 @@ app.py          主窗口、状态和操作流程
 cli.py          子进程执行与 serve 进程管理
 parsing.py      解析 info / user list / whoami / backup list / serve / version 输出
 server_config.py 计算服务端默认路径和默认监听/API 地址
+service_plan.py  生成 systemd unit 路径与 service 命令
 gui_config.py    读写 v2 config.gui.json（连接方式、二进制/数据目录、上次登录用户名）
-dialogs.py      Qt 登录、输入、确认、路径选择和设置对话框
+dialogs.py      Qt 登录、输入、确认、路径选择、设置和服务安装/更新对话框
 widgets.py      自绘卡片、按钮、输入框、状态点、组标签与成员行
 fonts.py        选择 Windows/macOS/Linux 的系统 UI 字体
 theme.py        明暗配色、字号与全局样式表
@@ -59,10 +62,10 @@ assets/whale.svg DeepSeek 鲸鱼标志（Simple Icons，CC0-1.0）
 assets/whale.ico Windows 可执行文件图标
 assets/whale.icns macOS .app 图标
 assets/whale.png 512px 图标（备用）
-tests/          解析器与配置读写测试
+tests/          解析器、配置读写和 service 命令拼装测试
 ```
 
-解析器与配置测试：
+解析器、配置与 service 命令拼装测试：
 
 ```sh
 gui/.venv/bin/python -m unittest discover -s gui/tests -v
