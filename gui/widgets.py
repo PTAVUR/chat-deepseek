@@ -1147,6 +1147,46 @@ class Field(QFrame):
         return self.edit.returnPressed
 
 
+class DisplayField(QFrame):
+    """只读展示框，外观与 Field 一致；内容超长时中间省略。"""
+
+    def __init__(
+        self,
+        text: str = "",
+        parent: QWidget | None = None,
+        height: int = 40,
+    ) -> None:
+        super().__init__(parent)
+        self.setFixedHeight(height)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.label = ElidedLabel(text, 13, 400, "text", self)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 0, 12, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.label, 1)
+        self.setToolTip(text)
+
+    def setText(self, value: str) -> None:  # noqa: N802
+        self.label.setText(value)
+        self.setToolTip(value)
+
+    def setToolTip(self, text: str) -> None:  # noqa: N802
+        """同时设置外框和内部文字，悬停任意位置都能看到完整内容。"""
+        super().setToolTip(text)
+        if hasattr(self, "label"):
+            self.label.setToolTip(text)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        c = theme.colors()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.setBrush(QColor(c["card_alt"]))
+        painter.setPen(QPen(QColor(c["border"]), 1))
+        painter.drawPath(_rounded_path(rect, 20))
+        painter.end()
+
+
 class TextBox(QFrame):
     """圆角只读输出框，内部 QPlainTextEdit 无边框。"""
 
