@@ -45,6 +45,72 @@ class User:
     def status_text(self) -> str:
         return "已禁用" if self.disabled else "正常"
 
+    @property
+    def rank(self) -> int:
+        return group_rank(self.groups)
+
+
+GROUP_RANKS = {"User": 1, "Admin": 2, "Owner": 3}
+
+
+def group_rank(groups: Sequence[str]) -> int:
+    """返回账户组里的最高权限等级；未知组忽略。"""
+    return max((GROUP_RANKS.get(group, 0) for group in groups), default=0)
+
+
+@dataclass(frozen=True)
+class Identity:
+    """`whoami` 返回的当前 CLI 登录身份。"""
+
+    username: str
+    groups: tuple[str, ...]
+    expires_at: datetime
+
+    @property
+    def groups_text(self) -> str:
+        return ", ".join(self.groups)
+
+    @property
+    def rank(self) -> int:
+        return group_rank(self.groups)
+
+    @property
+    def role(self) -> str:
+        rank = self.rank
+        for name, value in GROUP_RANKS.items():
+            if value == rank:
+                return name
+        return "User"
+
+    @property
+    def is_admin(self) -> bool:
+        return self.rank >= GROUP_RANKS["Admin"]
+
+    @property
+    def is_owner(self) -> bool:
+        return self.rank >= GROUP_RANKS["Owner"]
+
+    def can_operate(self, target: User) -> bool:
+        """与 CLI 的 canOperate 一致：Owner 可以操作任何账户，其余要求严格高于目标。"""
+        return self.is_owner or target.rank < self.rank
+
+    def can_reset_password(self, target: User) -> bool:
+        return self.can_operate(target)
+
+    def can_disable(self, target: User) -> bool:
+        return self.can_operate(target) and target.username != self.username
+
+    def can_delete(self, target: User) -> bool:
+        return self.can_operate(target) and target.username != self.username
+
+    @property
+    def can_grant_groups(self) -> bool:
+        return self.is_owner
+
+    @property
+    def can_manage_backups(self) -> bool:
+        return self.is_owner
+
 
 @dataclass(frozen=True)
 class Backup:
@@ -84,6 +150,25 @@ def parse_users(text: str) -> list[User]:
             )
         )
     return users
+
+
+def parse_whoami(text: str) -> Identity:
+    """解析 `whoami` 的 tab 分隔输出：用户名、组、过期时间。"""
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise ParseError("whoami 输出应为一行")
+    parts = lines[0].split("\t")
+    if len(parts) != 3:
+        raise ParseError(f"无法解析登录身份：{lines[0]}")
+    username, groups_text, expires_text = (part.strip() for part in parts)
+    if not username:
+        raise ParseError("登录身份缺少用户名")
+    groups = tuple(group for group in groups_text.split(",") if group)
+    try:
+        expires_at = datetime.strptime(expires_text, "%Y-%m-%d %H:%M:%S")
+    except ValueError as exc:
+        raise ParseError(f"无法解析登录过期时间：{expires_text}") from exc
+    return Identity(username=username, groups=groups, expires_at=expires_at)
 
 
 def parse_backup_path(text: str) -> str | None:
@@ -182,6 +267,47 @@ def explain_failure(
     command = args[0].lower() if args else ""
     subcommand = args[1].lower() if len(args) > 1 else ""
     address = _listen_address(combined)
+
+    if code == 3:
+        if "登录已过期" in combined:
+            return Failure("登录已过期", "登录有效期已到，请重新登录。")
+        if "登录已失效" in combined:
+            return Failure(
+                "登录已失效",
+                "账户可能已被禁用、删除或重置密码，请重新登录。",
+            )
+        if "当前登录的数据目录是" in combined:
+            return Failure(
+                "数据目录不一致",
+                "当前登录态属于另一个数据目录，请重新登录。",
+            )
+        return Failure("需要登录", "请先登录 chat-deepseek CLI 管理账户。")
+
+    if code == 4:
+        if "该账户没有 CLI 管理权限" in combined:
+            return Failure(
+                "没有管理权限",
+                "CLI 管理只对 Admin 和 Owner 开放，请换一个有权限的账户登录。",
+            )
+        if "只有 Owner 可以指定组" in combined:
+            return Failure(
+                "只有 Owner 可以指定组",
+                "Admin 只能创建普通 User；需要创建 Admin 或 Owner 时请用 Owner 登录。",
+            )
+        if "只有 Owner 可以操作" in combined:
+            return Failure(
+                "权限不足",
+                "只有 Owner 可以操作 Admin 或 Owner 账户。",
+            )
+        if "不能禁用自己" in combined:
+            return Failure("不能禁用自己", "请换一个 Owner 或 Admin 账户来禁用当前账户。")
+        if "不能删除自己" in combined:
+            return Failure("不能删除自己", "请换一个 Owner 账户来删除当前账户。")
+        if "需要 Owner 权限" in combined:
+            return Failure("需要 Owner 权限", "这个操作只对 Owner 开放。")
+        if "需要 Admin 或 Owner 权限" in combined:
+            return Failure("需要 Admin 或 Owner 权限", "这个操作只对 Admin 和 Owner 开放。")
+        return Failure("权限不足", "当前账户没有执行这个操作的权限。")
 
     missing_binary = re.search(
         r"(?:no such file or directory|cannot find the file specified|"
@@ -317,7 +443,7 @@ def explain_failure(
             "这个数据目录里已经有 Owner。可以直接添加账户，或换一个数据目录。",
         )
 
-    if "数据目录中没有 chat.db" in combined:
+    if "数据目录中没有 chat.db" in combined or "数据目录未初始化" in combined:
         return Failure(
             "数据目录还没有初始化",
             "这个目录里没有 chat.db。请先创建 Owner 账户，或检查设置里的数据目录。",
@@ -412,6 +538,20 @@ def explain_failure(
         return Failure(
             "账户不存在",
             "这个账户可能已经被删除，刷新列表后再试。",
+        )
+
+    if "账户不存在" in combined:
+        return Failure("账户不存在", "请检查用户名，或请管理员确认账户是否存在。")
+    if "密码错误" in combined:
+        return Failure("密码错误", "密码不正确，请重新输入。")
+    if "账户已被禁用" in combined:
+        return Failure("账户已被禁用", "请联系 Owner 启用这个账户后再登录。")
+    if "密码过长" in combined:
+        return Failure("密码过长", "密码长度不能超过 1024 位。")
+    if "无法确定当前 shell 进程" in combined:
+        return Failure(
+            "无法保存登录态",
+            "当前进程结构无法绑定登录态，请在普通终端里重新登录。",
         )
 
     if "invalid username" in lowered or "用户名需为" in combined:

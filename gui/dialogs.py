@@ -156,25 +156,77 @@ class PasswordDialog(BaseDialog):
         self.accept()
 
 
+class LoginDialog(BaseDialog):
+    def __init__(
+        self,
+        parent: QWidget,
+        username: str = "",
+        error: str | None = None,
+    ) -> None:
+        super().__init__(parent, "登录", 460, 380)
+        self._description(
+            "使用 Admin 或 Owner 账户登录。登录只在本窗口有效，15 分钟后自动退出。"
+        )
+        self.username = _field("用户名")
+        self.username.setText(username)
+        self.password = _field("密码", password=True)
+        self._root.addWidget(self.username)
+        self._root.addWidget(self.password)
+        self._root.addWidget(self._error_label())
+        if error:
+            self._show_error(error)
+        self._root.addStretch(1)
+        self._buttons("登录", self._ok)
+        self.username.returnPressed.connect(self.password.setFocus)
+        self.password.returnPressed.connect(self._ok)
+        if username:
+            self.password.setFocus()
+        else:
+            self.username.setFocus()
+
+    def _ok(self) -> None:
+        username = self.username.text().strip()
+        password = self.password.text()
+        if not username:
+            self._show_error("请输入用户名")
+            self.username.setFocus()
+            return
+        if not password:
+            self._show_error("请输入密码")
+            self.password.setFocus()
+            return
+        self.value = (username, password)
+        self.accept()
+
+
 class AccountDialog(BaseDialog):
-    def __init__(self, parent: QWidget, mode: str) -> None:
+    def __init__(
+        self,
+        parent: QWidget,
+        mode: str,
+        allow_groups: bool = True,
+    ) -> None:
         title = "创建 Owner" if mode == "owner" else "添加用户"
         super().__init__(parent, title, 480, 350 if mode == "owner" else 420)
         self.mode = mode
-        description = (
-            "第一个账户会成为 Owner。"
-            if mode == "owner"
-            else "新用户默认属于 User 组，可附加 Admin 或 Owner。"
-        )
+        self.allow_groups = allow_groups
+        if mode == "owner":
+            description = "第一个账户会成为 Owner。"
+        elif allow_groups:
+            description = "新用户默认属于 User 组，可附加 Admin 或 Owner。"
+        else:
+            description = "新用户默认属于 User 组；Admin 不能指定附加组。"
         self._description(description)
         self.username = _field("用户名")
         self.password = _field("密码", password=True)
         self.confirm = _field("再次输入密码", password=True)
         for entry in (self.username, self.password, self.confirm):
             self._root.addWidget(entry)
-        self.admin = widgets.CheckBox("Admin")
-        self.owner = widgets.CheckBox("Owner")
-        if mode == "user":
+        self.admin: widgets.CheckBox | None = None
+        self.owner: widgets.CheckBox | None = None
+        if mode == "user" and allow_groups:
+            self.admin = widgets.CheckBox("Admin")
+            self.owner = widgets.CheckBox("Owner")
             row = QHBoxLayout()
             row.setSpacing(18)
             caption = widgets.label("附加组", 11, 500, "muted")
@@ -210,9 +262,9 @@ class AccountDialog(BaseDialog):
             return
         groups: list[str] = []
         if self.mode == "user":
-            if self.admin.isChecked():
+            if self.admin is not None and self.admin.isChecked():
                 groups.append("Admin")
-            if self.owner.isChecked():
+            if self.owner is not None and self.owner.isChecked():
                 groups.append("Owner")
         self.value = (username, password, tuple(groups))
         self.accept()

@@ -287,6 +287,53 @@ def _rounded_path(rect: QRectF, radius: float) -> QPainterPath:
     return path
 
 
+class LockGlyph(QWidget):
+    """登录锁定态的标志：主色锁体 + 柔和的圆角底。"""
+
+    def __init__(self, size: int = 40, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._size = size
+        self.setFixedSize(size, size)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        c = theme.colors()
+        size = float(self._size)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(str(c["primary_soft"])))
+        painter.drawPath(
+            _rounded_path(QRectF(0, 0, size, size), round(size * 0.32))
+        )
+
+        painter.setBrush(QColor(str(c["primary"])))
+        body = QRectF(size * 0.32, size * 0.46, size * 0.36, size * 0.31)
+        painter.drawPath(_rounded_path(body, size * 0.09))
+
+        pen = QPen(
+            QColor(str(c["primary"])),
+            max(1.5, size * 0.085),
+            Qt.PenStyle.SolidLine,
+            Qt.PenCapStyle.RoundCap,
+        )
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        shackle = QRectF(size * 0.365, size * 0.265, size * 0.27, size * 0.30)
+        painter.drawArc(shackle, 0, 180 * 16)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(str(c["primary_soft"])))
+        painter.drawEllipse(
+            QPointF(size * 0.5, size * 0.585), size * 0.035, size * 0.035
+        )
+        painter.drawRoundedRect(
+            QRectF(size * 0.485, size * 0.60, size * 0.03, size * 0.10),
+            size * 0.015,
+            size * 0.015,
+        )
+        painter.end()
+
+
 class Avatar(QWidget):
     """账户头像：首字母圆形底色。"""
 

@@ -35,6 +35,7 @@ class LoadTest(unittest.TestCase):
                         "binary": " /opt/chat-deepseek ",
                         "data_dir": "/srv/data",
                         "backup_dir": 3,
+                        "username": " owner ",
                         "unknown": "ignored",
                     }
                 ),
@@ -43,7 +44,11 @@ class LoadTest(unittest.TestCase):
             values = gui_config.load(path)
         self.assertEqual(
             values,
-            {"binary": "/opt/chat-deepseek", "data_dir": "/srv/data"},
+            {
+                "binary": "/opt/chat-deepseek",
+                "data_dir": "/srv/data",
+                "username": "owner",
+            },
         )
 
 
@@ -57,12 +62,14 @@ class SaveTest(unittest.TestCase):
                     "binary": "/opt/chat-deepseek",
                     "data_dir": "/srv/chat data",
                     "backup_dir": "/srv/backups",
+                    "username": "owner",
                 },
             )
             values = gui_config.load(path)
             mode = os.stat(path).st_mode & 0o777
         self.assertEqual(values["data_dir"], "/srv/chat data")
         self.assertEqual(values["backup_dir"], "/srv/backups")
+        self.assertEqual(values["username"], "owner")
         if os.name == "posix":
             self.assertEqual(mode, 0o600)
 

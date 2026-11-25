@@ -38,7 +38,85 @@ owner     User,Owner        true      9a1c
             parsing.parse_users("USERNAME GROUPS DISABLED ID\nalice only-three\n")
 
 
+class ParseWhoamiTest(unittest.TestCase):
+    def test_identity(self) -> None:
+        identity = parsing.parse_whoami(
+            "owner\tUser,Admin,Owner\t2026-11-25 22:10:00\n"
+        )
+        self.assertEqual(identity.username, "owner")
+        self.assertEqual(identity.groups, ("User", "Admin", "Owner"))
+        self.assertEqual(identity.groups_text, "User, Admin, Owner")
+        self.assertEqual(identity.role, "Owner")
+        self.assertEqual(identity.expires_at, datetime(2026, 11, 25, 22, 10, 0))
+        self.assertTrue(identity.is_admin)
+        self.assertTrue(identity.is_owner)
+
+    def test_bad_output(self) -> None:
+        with self.assertRaises(parsing.ParseError):
+            parsing.parse_whoami("")
+        with self.assertRaises(parsing.ParseError):
+            parsing.parse_whoami("owner\tUser,Admin\n")
+        with self.assertRaises(parsing.ParseError):
+            parsing.parse_whoami("owner\tUser,Admin\tnot-a-time\n")
+        with self.assertRaises(parsing.ParseError):
+            parsing.parse_whoami("a\tUser\t2026-11-25 22:10:00\nb\tUser\t2026-11-25 22:10:00\n")
+
+
+class IdentityPermissionTest(unittest.TestCase):
+    def _identity(self, groups: str) -> parsing.Identity:
+        return parsing.Identity(
+            "me",
+            tuple(groups.split(",")),
+            datetime(2026, 11, 25, 22, 10, 0),
+        )
+
+    def _user(self, name: str, groups: str) -> parsing.User:
+        return parsing.User(name, tuple(groups.split(",")), False, name)
+
+    def test_owner_can_operate_everyone(self) -> None:
+        owner = self._identity("User,Owner")
+        for target in (
+            self._user("user", "User"),
+            self._user("admin", "User,Admin"),
+            self._user("owner2", "User,Owner"),
+            self._user("me", "User,Owner"),
+        ):
+            with self.subTest(target=target.username):
+                self.assertTrue(owner.can_operate(target))
+        self.assertFalse(owner.can_disable(self._user("me", "User,Owner")))
+        self.assertFalse(owner.can_delete(self._user("me", "User,Owner")))
+
+    def test_admin_limited_to_user(self) -> None:
+        admin = self._identity("User,Admin")
+        user = self._user("user", "User")
+        other_admin = self._user("admin2", "User,Admin")
+        owner = self._user("owner", "User,Owner")
+        me = self._user("me", "User,Admin")
+        for target in (user,):
+            self.assertTrue(admin.can_reset_password(target))
+            self.assertTrue(admin.can_disable(target))
+            self.assertTrue(admin.can_delete(target))
+        for target in (other_admin, owner, me):
+            with self.subTest(target=target.username):
+                self.assertFalse(admin.can_operate(target))
+                self.assertFalse(admin.can_reset_password(target))
+                self.assertFalse(admin.can_disable(target))
+                self.assertFalse(admin.can_delete(target))
+        self.assertFalse(admin.can_grant_groups)
+        self.assertFalse(admin.can_manage_backups)
+
+
+class ParseWhoamiGroupsTest(unittest.TestCase):
+    def test_unknown_groups_do_not_count(self) -> None:
+        identity = parsing.parse_whoami(
+            "me\tUser,Ghost\t2026-11-25 22:10:00\n"
+        )
+        self.assertEqual(identity.rank, 1)
+        self.assertEqual(identity.role, "User")
+
+
 class ParseBackupTest(unittest.TestCase):
+
     def test_path_with_spaces(self) -> None:
         self.assertEqual(
             parsing.parse_backup_path("备份已写入 /tmp/my backups/a.zip\n"),
@@ -290,6 +368,45 @@ class ExplainFailureTest(unittest.TestCase):
         )
         self.assertEqual(failure.title, "命令行参数无效")
         self.assertIn("-username", failure.message)
+
+    def test_auth_required_exit_code(self) -> None:
+        cases = {
+            "错误： 需要先登录：chat-deepseek login\n": "需要登录",
+            "错误： 登录已过期，请重新 login\n": "登录已过期",
+            "错误： 登录已失效，请重新 login\n": "登录已失效",
+            "错误： 当前登录的数据目录是 /a，本次命令指向 /b；请重新 login\n": "数据目录不一致",
+        }
+        for text, title in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(
+                    parsing.explain_failure(text, code=3).title, title
+                )
+
+    def test_forbidden_exit_code(self) -> None:
+        cases = {
+            "错误： 该账户没有 CLI 管理权限\n": "没有管理权限",
+            "错误： 只有 Owner 可以指定组；Admin 只能创建普通 User\n": "只有 Owner 可以指定组",
+            "错误： 只有 Owner 可以操作 owner 账户\n": "权限不足",
+            "错误： 不能禁用自己\n": "不能禁用自己",
+            "错误： 不能删除自己\n": "不能删除自己",
+            "错误： 需要 Owner 权限\n": "需要 Owner 权限",
+        }
+        for text, title in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(
+                    parsing.explain_failure(text, code=4).title, title
+                )
+
+    def test_login_errors(self) -> None:
+        cases = {
+            "错误： 账户不存在\n": "账户不存在",
+            "错误： 密码错误\n": "密码错误",
+            "错误： 账户已被禁用\n": "账户已被禁用",
+            "错误： 数据目录未初始化：/tmp/data；先运行 setup 或 backup restore\n": "数据目录还没有初始化",
+        }
+        for text, title in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(parsing.explain_failure(text).title, title)
 
     def test_unknown_error_keeps_output(self) -> None:
         failure = parsing.explain_failure(

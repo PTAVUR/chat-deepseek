@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-KEYS = ("binary", "data_dir", "backup_dir")
+KEYS = ("binary", "data_dir", "backup_dir", "username")
 
 
 def config_dir() -> Path:

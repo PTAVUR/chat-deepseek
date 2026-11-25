@@ -55,7 +55,10 @@ def find_binary() -> str:
 
 
 def run_command(
-    binary: str, args: Sequence[str], stdin_text: str | None = None
+    binary: str,
+    args: Sequence[str],
+    stdin_text: str | None = None,
+    timeout: float | None = None,
 ) -> CommandResult:
     """执行一次短命令并收集输出；serve 不走这里。"""
     kwargs: dict[str, object] = {
@@ -64,6 +67,8 @@ def run_command(
         "encoding": "utf-8",
         "errors": "replace",
     }
+    if timeout is not None:
+        kwargs["timeout"] = timeout
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     if stdin_text is None:

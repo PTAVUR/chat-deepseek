@@ -9,7 +9,14 @@
 - 新增 `login`、`logout`、`whoami`：登录态按 shell 隔离，固定 15 分钟过期；token 只放在用户运行时目录，数据库保存哈希。
 - `user ...` 和 `backup ...` 现在需要登录并按组校验：`Admin` 管理普通 `User`，`Owner` 负责授组、操作 `Admin`/`Owner` 和备份恢复；未登录退出码 `3`，权限不足 `4`。
 - 认证会话增加 `scope`（schema v5），浏览器 Cookie 与 CLI token 不能互相冒用。
-- GUI 尚未适配 CLI 登录；账户和备份操作暂时需要用 CLI 完成。
+
+### 管理界面
+
+- GUI 适配 CLI 登录：未登录时账户区显示锁图标、备份区提示登录后查看；点登录、刷新、添加或备份会弹出登录框，密码仍只经 stdin 传给子进程。
+- 账户操作按当前身份置灰：Admin 只能管理普通 User，不能授组或备份；Owner 可以授组、备份和操作 Admin/Owner；不能禁用或删除自己。
+- 登录态绑定 GUI 进程，15 分钟过期，关闭窗口自动 `logout`；切换数据目录或恢复备份后需要重新登录。
+- `config.gui.json` 记住上次登录的用户名，不保存密码。
+- 修复暗色系统直接启动时被 Fusion 浅色调色板误判为亮色的问题：先读平台调色板，再切换 Fusion；GNOME 下额外读取 `gsettings` 的 `color-scheme` / `gtk-theme`，不依赖 Qt 延迟上报的 `colorScheme`。
 
 ## 0.1.1-official0.1.3 - 2026-11-23
 

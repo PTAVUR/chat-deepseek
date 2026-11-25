@@ -42,7 +42,7 @@ CGO_ENABLED=0 go build -o chat-deepseek ./cmd/chat-deepseek
 
 ## 图形界面（可选）
 
-`gui/app.py` 是 Python + PySide6（Qt 6）管理界面：按钮只负责拼出 `chat-deepseek` 子命令，输出由 `gui/parsing.py` 解析成账户列表、服务状态和提示；已知失败会翻译成可操作说明，识别不了才显示原始输出。账户、会话、备份逻辑仍全部在 `chat-deepseek` 里，不另写一套。它覆盖 `setup`、`serve`、`backup`、`user ...`、`version` 和 `help`；聊天仍由 `serve` 提供的现有 Web UI 完成。
+`gui/app.py` 是 Python + PySide6（Qt 6）管理界面：按钮只负责拼出 `chat-deepseek` 子命令，输出由 `gui/parsing.py` 解析成账户列表、服务状态和提示；已知失败会翻译成可操作说明，识别不了才显示原始输出。账户、会话、备份逻辑仍全部在 `chat-deepseek` 里，不另写一套。它覆盖 `setup`、`serve`、`backup`、`user ...`、`login` / `logout` / `whoami`、`version` 和 `help`；聊天仍由 `serve` 提供的现有 Web UI 完成。
 
 依赖装在 `gui/.venv`（已 gitignore）。在仓库根目录：
 
@@ -54,11 +54,11 @@ gui/.venv/bin/python gui/app.py
 
 Windows 用 `gui\.venv\Scripts\python gui\app.py`；更完整的命令见 [gui/README.md](gui/README.md)。需要 Python 3.10+ 和 `requirements.txt` 里的 PySide6。Linux 还缺 Qt 的 xcb 运行库时，Debian/Ubuntu 可安装 `libxcb-cursor0`、`libxkbcommon-x11-0`、`libgl1`、`libegl1` 等系统包。
 
-`gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。设置页的二进制目录、数据目录、备份地址保存在平台用户配置目录的 `config.gui.json`：Linux 是 `~/.config/chat-deepseek/`，macOS 是 `~/Library/Application Support/chat-deepseek/`，Windows 是 `%APPDATA%\chat-deepseek\`。监听地址、Public URL 和 API 地址写入数据目录的 `config.json`，`serve` 启动时直接读取。左下角的“恢复默认”在 Windows/Linux 回到二进制同级 `data/`、`data/backups/`，在 macOS 回到 `~/Library/Application Support/chat-deepseek/data/`；监听地址和 API 地址回到 `127.0.0.1:8090` 和官方地址。数据卡片可以立即备份、查看备份记录并从记录中恢复；恢复前必须先停止服务。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里。
+`gui/app.py` 默认使用 `chat-deepseek` 二进制所在目录（仓库根目录），也可以在“设置”里改。设置页的二进制目录、数据目录、备份地址保存在平台用户配置目录的 `config.gui.json`：Linux 是 `~/.config/chat-deepseek/`，macOS 是 `~/Library/Application Support/chat-deepseek/`，Windows 是 `%APPDATA%\chat-deepseek\`。监听地址、Public URL 和 API 地址写入数据目录的 `config.json`，`serve` 启动时直接读取。左下角的“恢复默认”在 Windows/Linux 回到二进制同级 `data/`、`data/backups/`，在 macOS 回到 `~/Library/Application Support/chat-deepseek/data/`；监听地址和 API 地址回到 `127.0.0.1:8090` 和官方地址。数据卡片可以立即备份、查看备份记录并从记录中恢复；恢复前必须先停止服务。密码通过 `--password-stdin` 从 GUI 传给子进程，不出现在命令行参数或输出日志里；上次登录的用户名记在 `config.gui.json`，不保存密码。
 
-关闭窗口会停止由它启动的服务；外部启动的 `chat-deepseek serve` 不会被它接管。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止服务是强制结束进程；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
+关闭窗口会停止由它启动的服务，并退出当前 GUI 的 CLI 登录；外部启动的 `chat-deepseek serve` 不会被它接管。GUI 依赖 CLI 的参数名、退出码和中文输出；CLI 文案或表格格式变化时需要同步改 `gui/parsing.py`。Windows 上停止服务是强制结束进程；同一个数据目录同时只能有一个服务实例。无图形桌面的服务器继续直接用 CLI，GUI 不是运行必需组件。
 
-CLI 登录上线后，GUI 的账户和备份操作暂时会提示需要登录；GUI 的登录流程是下一步，当前请先用 CLI 完成这些操作。
+GUI 使用 CLI 的登录态：不登录也能启停服务和改设置，账户区显示锁图标，备份区提示登录后查看；点击登录、刷新、添加或任一备份按钮会弹出登录框。只有 Admin 和 Owner 能登录，按钮会按当前身份置灰不可执行的操作；登录 15 分钟后过期，关闭 GUI 会自动退出登录。
 
 ## 发布流水线
 
@@ -114,7 +114,7 @@ Linux 不附带预编译 GUI。PyInstaller onefile 会绑定构建机的 glibc�
 
 - 只有 `Admin` / `Owner` 能登录；普通 `User` 没有 CLI 管理权限。
 - `logout` 只退出当前终端，其他终端不受影响。
-- 未登录或登录过期时退出码为 `3`，权限不足为 `4`，便于脚本和后续 GUI 判断。
+- 未登录或登录过期时退出码为 `3`，权限不足为 `4`，便于脚本和 GUI 判断。
 - 登录态不写进 `data/`：Linux 在 `$XDG_RUNTIME_DIR/chat-deepseek/sessions/`（tmpfs），macOS 在 `$TMPDIR/chat-deepseek/sessions/`，Windows 在 `%LOCALAPPDATA%\chat-deepseek\run\sessions\`；数据库只保存 token 的 SHA-256。
 - 非交互场景用 `--password-stdin`，密码不会出现在命令行参数里。
 
