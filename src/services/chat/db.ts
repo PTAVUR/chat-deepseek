@@ -162,8 +162,10 @@ export const clearStaging = async (): Promise<void> => {
   stagedFiles = new Map()
 }
 
-export const addStagingSession = async (session: Session): Promise<void> => {
-  stagedSessions.set(session.id, session)
+export const addStagingSessions = async (sessions: Session[]): Promise<void> => {
+  for (const session of sessions) {
+    stagedSessions.set(session.id, session)
+  }
 }
 
 export const saveStagingFiles = async (files: StoredFile[]): Promise<void> => {
@@ -172,17 +174,22 @@ export const saveStagingFiles = async (files: StoredFile[]): Promise<void> => {
   }
 }
 
-export const updateStagingFileTypes = async (types: ReadonlyMap<string, string>): Promise<void> => {
-  for (const session of stagedSessions.values()) {
+/** 回填 MIME，保留归档中的 isImage 标识；只处理本次导入涉及的会话。 */
+export const updateStagingFileTypes = async (
+  types: ReadonlyMap<string, string>,
+  sessionIds: ReadonlySet<string>
+): Promise<void> => {
+  for (const id of sessionIds) {
+    const session = stagedSessions.get(id)
+    if (!session) {
+      continue
+    }
     for (const message of session.messages) {
       if (message.role !== 'user') {
         continue
       }
       for (const file of message.files) {
-        const type = types.get(file.id)
-        if (type !== undefined) {
-          file.mimeType = type
-        }
+        file.mimeType = types.get(file.id) ?? ''
       }
     }
   }

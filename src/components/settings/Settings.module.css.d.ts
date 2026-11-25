@@ -16,6 +16,9 @@ declare const styles: {
   readonly success: string
   readonly control: string
   readonly cellButton: string
+  readonly importing: string
+  readonly importProgress: string
+  readonly importTrack: string
   readonly segmented: string
   readonly segment: string
   readonly segmentActive: string
