@@ -1,8 +1,13 @@
 import clsx from 'clsx'
 import { memo, useState } from 'react'
 import { useTranslate } from '../../i18n/index.js'
-import { IconEditOutline16, IconEllipsisOutline16, IconTrashOutline16 } from '../base/icons.js'
-import { renameSession, selectSession } from '../../services/chat/store.js'
+import {
+  IconEditOutline16,
+  IconEllipsisOutline16,
+  IconPinOutline16,
+  IconTrashOutline16,
+} from '../base/icons.js'
+import { renameSession, selectSession, setSessionPinned } from '../../services/chat/store.js'
 import type { SessionSummary } from '../../services/chat/types.js'
 import { IconButton } from '../base/IconButton.js'
 import { Menu } from '../base/Menu.js'
@@ -55,10 +60,23 @@ export const SessionItem = memo(function SessionItem({
         closeMobileSider()
       }}
     >
-      <div className={styles.title}>{displayTitle}</div>
+      <div className={styles.title}>
+        {session.pinned ? (
+          <span className={styles.pin} aria-hidden="true">
+            <IconPinOutline16 />
+          </span>
+        ) : null}
+        <span className={styles.titleText}>{displayTitle}</span>
+      </div>
       <div className={styles.action} onClick={(event) => event.stopPropagation()}>
         <Menu
           options={[
+            {
+              key: 'pin',
+              label: t(session.pinned ? 'unpinChat' : 'pinChat'),
+              icon: <IconPinOutline16 />,
+              onSelect: () => setSessionPinned(session.id, !session.pinned),
+            },
             {
               key: 'rename',
               label: t('sessionItemMenuRenameOption'),

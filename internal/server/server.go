@@ -114,6 +114,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/import", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleImport))))
 	mux.Handle("GET /api/v1/chats/{id}", s.withAuth(http.HandlerFunc(s.handleGetChat)))
 	mux.Handle("PUT /api/v1/chats/{id}", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleUpdateChat))))
+	mux.Handle("PUT /api/v1/chats/{id}/pin", s.withAuth(s.withCSRF(http.HandlerFunc(s.handlePinChat))))
 	mux.Handle("DELETE /api/v1/chats/{id}", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleDeleteChat))))
 	mux.Handle("POST /api/v1/files", s.withAuth(s.withCSRF(http.HandlerFunc(s.handleUploadFile))))
 	mux.Handle(

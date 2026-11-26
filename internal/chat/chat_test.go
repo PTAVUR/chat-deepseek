@@ -106,6 +106,49 @@ func TestCreateGetListUpdate(t *testing.T) {
 	}
 }
 
+func TestSetPinned(t *testing.T) {
+	store, _, userID, otherID := newTestStore(t)
+	ctx := context.Background()
+	if _, err := store.Create(ctx, userID, sessionJSON("session-a", "A")); err != nil {
+		t.Fatalf("create a: %v", err)
+	}
+	if _, err := store.Create(ctx, userID, sessionJSON("session-b", "B")); err != nil {
+		t.Fatalf("create b: %v", err)
+	}
+	if err := store.SetPinned(ctx, userID, "session-b", true); err != nil {
+		t.Fatalf("pin b: %v", err)
+	}
+	got, err := store.Get(ctx, userID, "session-b")
+	if err != nil {
+		t.Fatalf("get b: %v", err)
+	}
+	if got.Version != 1 {
+		t.Fatalf("pinning changed version to %d", got.Version)
+	}
+	summaries, err := store.List(ctx, userID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("summaries = %+v", summaries)
+	}
+	if summaries[0].ID != "session-b" || !summaries[0].Pinned {
+		t.Fatalf("first summary = %+v, want pinned session-b", summaries[0])
+	}
+	if summaries[1].ID != "session-a" || summaries[1].Pinned {
+		t.Fatalf("second summary = %+v, want unpinned session-a", summaries[1])
+	}
+	if err := store.SetPinned(ctx, userID, "session-b", false); err != nil {
+		t.Fatalf("unpin b: %v", err)
+	}
+	if err := store.SetPinned(ctx, otherID, "session-b", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other user pin error = %v", err)
+	}
+	if err := store.SetPinned(ctx, userID, "missing", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing pin error = %v", err)
+	}
+}
+
 func TestDeleteReturnsFileReferences(t *testing.T) {
 	store, _, userID, _ := newTestStore(t)
 	ctx := context.Background()

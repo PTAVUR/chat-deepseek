@@ -36,6 +36,7 @@ type Summary struct {
 	Title     string `json:"title"`
 	CreatedAt int64  `json:"createdAt"`
 	UpdatedAt int64  `json:"updatedAt"`
+	Pinned    bool   `json:"pinned"`
 }
 
 // Stored 是完整会话及其当前版本。
@@ -217,9 +218,9 @@ func (s *Store) Get(ctx context.Context, userID, id string) (Stored, error) {
 func (s *Store) List(ctx context.Context, userID string) ([]Summary, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT id, title, created_at, updated_at FROM chats
+		`SELECT id, title, created_at, updated_at, pinned FROM chats
 		 WHERE user_id = ?
-		 ORDER BY updated_at DESC`,
+		 ORDER BY pinned DESC, updated_at DESC`,
 		userID,
 	)
 	if err != nil {
@@ -229,15 +230,49 @@ func (s *Store) List(ctx context.Context, userID string) ([]Summary, error) {
 	summaries := make([]Summary, 0)
 	for rows.Next() {
 		var summary Summary
-		if err := rows.Scan(&summary.ID, &summary.Title, &summary.CreatedAt, &summary.UpdatedAt); err != nil {
+		var pinned int
+		if err := rows.Scan(
+			&summary.ID,
+			&summary.Title,
+			&summary.CreatedAt,
+			&summary.UpdatedAt,
+			&pinned,
+		); err != nil {
 			return nil, fmt.Errorf("scan chat: %w", err)
 		}
+		summary.Pinned = pinned != 0
 		summaries = append(summaries, summary)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list chats: %w", err)
 	}
 	return summaries, nil
+}
+
+// SetPinned 更新会话的置顶状态；不改内容、版本和 updated_at。
+func (s *Store) SetPinned(ctx context.Context, userID, id string, pinned bool) error {
+	pinnedValue := 0
+	if pinned {
+		pinnedValue = 1
+	}
+	result, err := s.db.ExecContext(
+		ctx,
+		`UPDATE chats SET pinned = ? WHERE id = ? AND user_id = ?`,
+		pinnedValue,
+		id,
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("set chat pinned: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set chat pinned rows: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // Update 用版本锁更新会话；版本不匹配时返回 ErrConflict。

@@ -98,7 +98,7 @@ const putChat = async (session: Session): Promise<void> => {
 export const loadSessionSummaries = async (): Promise<SessionSummary[]> => {
   const response = await request(`${API}/chats`, { method: 'GET' })
   const body = await readJSON<{ chats: SessionSummary[] }>(response)
-  return body.chats.map(toSessionSummary)
+  return body.chats.map((chat) => toSessionSummary(chat))
 }
 
 export const loadSession = async (id: string): Promise<Session | undefined> => {
@@ -119,6 +119,15 @@ export const renameSession = async (id: string, title: string): Promise<void> =>
       return
     }
     await updateChat({ ...stored.session, title, updatedAt: Date.now() }, stored.version)
+  })
+}
+
+/** 置顶状态只改服务端 chats.pinned；不修改会话内容和 version。 */
+export const setSessionPinned = async (id: string, pinned: boolean): Promise<void> => {
+  await request(`${API}/chats/${encodeURIComponent(id)}/pin`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pinned }),
   })
 }
 

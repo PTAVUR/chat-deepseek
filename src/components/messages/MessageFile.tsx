@@ -4,6 +4,7 @@ import { useTranslate } from '../../i18n/index.js'
 import { useUploads } from '../../services/attachments.js'
 import type { FileAttachment } from '../../services/chat/types.js'
 import { IconPhotoErrorFill20, IconRefreshOutline16 } from '../base/icons.js'
+import { useImagePreview } from '../base/ImagePreview.js'
 import { Tooltip } from '../base/Tooltip.js'
 import { FileCard } from '../files/FileCard.js'
 import { useFileView } from '../files/useFileView.js'
@@ -34,6 +35,7 @@ export const MessageFile = ({
   onRetry: (() => void) | null
 }) => {
   const t = useTranslate()
+  const { openImage } = useImagePreview()
   const { image, url, link } = useFileView(file.id, file.name)
   const [failedUrl, setFailedUrl] = useState<string | null>(null)
   const upload = useUploadState(file)
@@ -112,11 +114,17 @@ export const MessageFile = ({
       )
     }
 
-    // 正常态：链接到原件
-    return link ? (
-      <a className={clsx(styles.image, styles.imageThumb)} {...link} title={file.name}>
+    // 正常态：点击打开应用内放大预览
+    return url ? (
+      <button
+        type="button"
+        className={clsx(styles.image, styles.imageThumb)}
+        title={file.name}
+        aria-label={t('imagePreview')}
+        onClick={() => openImage({ src: url, alt: file.name })}
+      >
         {preview}
-      </a>
+      </button>
     ) : (
       // 原件还没加载出来（极短暂）
       <div className={styles.image} />

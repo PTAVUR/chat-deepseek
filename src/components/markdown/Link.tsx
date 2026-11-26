@@ -1,5 +1,7 @@
 import type { Image, Link as LinkNode } from 'mdast'
 import { memo, type ReactNode } from 'react'
+import { useTranslate } from '../../i18n/index.js'
+import { useImagePreview } from '../base/ImagePreview.js'
 
 const sanitizeUrl = (url: string) => {
   // 如果URL没有协议，添加默认的https协议
@@ -45,12 +47,23 @@ export const Link = memo(function Link({
   )
 })
 
-/** Markdown 图片显示为指向图片地址的链接 */
+/** Markdown 图片：内联展示，点击打开应用内放大预览。 */
 export function ImageAsLink({ node }: { node: Image }) {
+  const t = useTranslate()
+  const { openImage } = useImagePreview()
   const url = sanitizeUrl(node.url)
+  if (!url) {
+    return <span>{node.alt || node.url}</span>
+  }
   return (
-    <a href={url} title={node.title ?? ''} target="_blank" rel="noreferrer">
-      {url}
-    </a>
+    <button
+      type="button"
+      className="ds-markdown-image"
+      title={node.title ?? undefined}
+      aria-label={node.alt || t('imagePreview')}
+      onClick={() => openImage({ src: url, alt: node.alt ?? undefined })}
+    >
+      <img src={url} alt={node.alt ?? ''} title={node.title ?? undefined} loading="lazy" />
+    </button>
   )
 }

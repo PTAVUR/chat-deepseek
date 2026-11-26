@@ -31,12 +31,31 @@
 }
 
 .title {
+  display: flex;
   flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 18px;
+}
+
+.titleText {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  line-height: 18px;
+}
+
+.pin {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--dsw-alias-label-tertiary);
+
+  svg {
+    width: 12px;
+    height: 12px;
+  }
 }
 
 .action {

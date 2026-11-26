@@ -119,12 +119,19 @@ export type Session = {
 }
 
 /** 会话列表元数据；消息只在打开会话时加载。 */
-export type SessionSummary = Pick<Session, 'id' | 'title' | 'createdAt' | 'updatedAt'>
+export type SessionSummary = Pick<Session, 'id' | 'title' | 'createdAt' | 'updatedAt'> & {
+  /** 置顶会话排在普通会话前；旧数据缺省为 false。 */
+  pinned?: boolean
+}
 
 /** 显式提取字段，避免将完整会话的消息带进列表。 */
-export const toSessionSummary = (session: SessionSummary): SessionSummary => ({
+export const toSessionSummary = (
+  session: SessionSummary,
+  pinned = session.pinned ?? false
+): SessionSummary => ({
   id: session.id,
   title: session.title,
   createdAt: session.createdAt,
   updatedAt: session.updatedAt,
+  pinned,
 })

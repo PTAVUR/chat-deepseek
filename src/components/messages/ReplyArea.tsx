@@ -1,6 +1,6 @@
 import { useTranslate } from '../../i18n/index.js'
 import clsx from 'clsx'
-import { memo, useEffect, useState, type ReactNode } from 'react'
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   IconBrowseOutline16,
   IconBrowseWarningOutline16,
@@ -64,10 +64,27 @@ export const ReplyArea = memo(function ReplyArea({
   streaming: boolean
   hasResponse: boolean
 }) {
-  useTranslate()
-  const [open, setOpen] = useState(true)
+  const t = useTranslate()
+  const [expanded, setExpanded] = useState(false)
+  const stepsRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
   const titleActive = streaming && !hasResponse
   useTicker(titleActive, 1000)
+
+  useEffect(() => {
+    stickToBottomRef.current = true
+  }, [message.id])
+
+  useEffect(() => {
+    if (expanded || !titleActive) {
+      return
+    }
+    const el = stepsRef.current
+    if (el && stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [expanded, titleActive, view.steps])
+
   if (view.steps.length === 0 && !(message.thinking && streaming)) {
     return null
   }
@@ -75,31 +92,60 @@ export const ReplyArea = memo(function ReplyArea({
   const thinking = message.thinking ?? view.steps.some((step) => step.type === 'thinking')
   const title = thinking ? getAreaTitle(view, streaming, Date.now(), hasResponse) : null
   const stopped = !streaming && !hasResponse
+  const hasSteps = view.steps.length > 0
+  const steps = (
+    <div className={styles.steps}>
+      {view.steps.map((step, index) => (
+        <StepItem
+          key={stepKey(step, index)}
+          step={step}
+          message={message}
+          sources={view.sources}
+          streaming={streaming}
+          isLast={index === view.steps.length - 1}
+        />
+      ))}
+    </div>
+  )
   return (
     <div className={styles.area}>
       {title ? (
-        <div className={styles.title} onClick={() => setOpen((value) => !value)}>
+        <button
+          type="button"
+          className={styles.title}
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
           <span className={clsx(styles.titleIcon, stopped && styles.stoppedIcon)}>
             <IconThinkOutline16 />
           </span>
           <span className={clsx(styles.titleText, titleActive && styles.shimmer)}>{title}</span>
-          {open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
-        </div>
+          <span className={styles.toggle}>
+            {expanded ? t('thinkingCollapse') : t('thinkingExpand')}
+          </span>
+          {expanded ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
+        </button>
       ) : null}
-      {open || !title ? (
-        <div className={styles.steps}>
-          {view.steps.map((step, index) => (
-            <StepItem
-              key={stepKey(step, index)}
-              step={step}
-              message={message}
-              sources={view.sources}
-              streaming={streaming}
-              isLast={index === view.steps.length - 1}
-            />
-          ))}
-        </div>
-      ) : null}
+      {hasSteps
+        ? title
+          ? (
+              <div
+                ref={stepsRef}
+                className={clsx(styles.window, !expanded && styles.collapsed)}
+                onScroll={() => {
+                  const el = stepsRef.current
+                  if (!el) {
+                    return
+                  }
+                  stickToBottomRef.current =
+                    el.scrollHeight - el.scrollTop - el.clientHeight < 24
+                }}
+              >
+                {steps}
+              </div>
+            )
+          : steps
+        : null}
     </div>
   )
 })

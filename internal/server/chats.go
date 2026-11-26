@@ -29,6 +29,10 @@ type updateChatRequest struct {
 	Version int64           `json:"version"`
 }
 
+type pinChatRequest struct {
+	Pinned bool `json:"pinned"`
+}
+
 func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
 	user := userFromContext(r.Context())
 	summaries, err := s.chats.List(r.Context(), user.ID)
@@ -85,6 +89,20 @@ func (s *Server) handleUpdateChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, chatResponse{Session: stored.Session, Version: stored.Version})
+}
+
+func (s *Server) handlePinChat(w http.ResponseWriter, r *http.Request) {
+	var request pinChatRequest
+	if err := decodeJSONLimit(w, r, &request, 1024); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "请求格式不正确")
+		return
+	}
+	user := userFromContext(r.Context())
+	if err := s.chats.SetPinned(r.Context(), user.ID, r.PathValue("id"), request.Pinned); err != nil {
+		s.writeChatError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleDeleteChat(w http.ResponseWriter, r *http.Request) {
