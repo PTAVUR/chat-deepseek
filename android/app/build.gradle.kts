@@ -21,8 +21,8 @@ android {
     applicationId = "com.elegantgx.chatdeepseek"
     minSdk = 29
     targetSdk = 36
-    versionCode = 1
-    versionName = "0.1.4-android1"
+    versionCode = 2
+    versionName = "0.1.5-android1"
   }
 
   signingConfigs {

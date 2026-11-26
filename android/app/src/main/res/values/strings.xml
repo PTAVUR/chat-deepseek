@@ -5,4 +5,13 @@
     <string name="server_notification_running">本地服务运行中</string>
     <string name="server_notification_failed">本地服务启动失败，打开应用重试</string>
     <string name="server_notification_stop">停止服务</string>
+    <string name="attachment_recent">最近照片</string>
+    <string name="attachment_take_photo">拍照</string>
+    <string name="attachment_gallery">相册</string>
+    <string name="attachment_files">文件</string>
+    <string name="attachment_done">完成</string>
+    <string name="attachment_selected_count">已选择 %1$d 张</string>
+    <string name="attachment_camera_unavailable">没有可用的相机</string>
+    <string name="attachment_open_failed">无法打开选择器</string>
+    <string name="attachment_photo_permission_denied">未授予照片访问权限，最近照片不可用，点此打开设置</string>
 </resources>

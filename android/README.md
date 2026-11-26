@@ -2,6 +2,8 @@
 
 自包含 Android 客户端：手机本地运行 Go 服务端，WebView 打开 `127.0.0.1` 上的聊天界面。不需要另外部署服务器，聊天时仍然需要联网调用 DeepSeek API。
 
+图片类附件使用应用内底部面板：上方是最近照片，下方是“拍照 / 相册 / 文件”三个入口。拍照通过 FileProvider 进入现有上传流程；相册调用系统照片选择器；文件仍走 SAF。首次打开面板会申请照片访问权限，仅用于显示最近照片缩略图；拒绝后仍可正常拍照、选相册或文件。
+
 ## 组成
 
 ```
@@ -69,6 +71,7 @@ android/dist/SHA256SUMS.txt
 
 - 仅打包 `arm64-v8a`。
 - 前台服务使用 `specialUse` 类型，满足 Android 14+ 的声明要求；通知权限由首次启动时申请。
+- “最近照片”需要 `READ_MEDIA_IMAGES`（Android 13+）或 `READ_EXTERNAL_STORAGE`（Android 12 及以下）。Android 14+ 支持只授权部分照片。
 - WebView 导出 blob 文件仍受 Android WebView 限制；附件上传、语音输入、图片预览、TTS 已接入。
 - 数据保存在应用私有目录 `files/data`；卸载应用会删除数据。不要把 `master.key` 或 `keystore.properties` 提交到仓库。
 - 当前未提供内置整库备份入口；后续可补原生导出 ZIP。
