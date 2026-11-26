@@ -29,3 +29,7 @@ coverage.out
 /build-gui/
 /release/
 /*.spec
+
+# Android APK + checksum are committed for sideloading
+!/android/dist/
+!/android/dist/**

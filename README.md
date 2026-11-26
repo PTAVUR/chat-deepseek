@@ -4,6 +4,19 @@
 
 本项目是 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) 的 fork，当前版本 `0.1.4-official0.1.4`，代码基线为上游 `v0.1.4`。仓库位于 [GitHub](https://github.com/elegantgx/chat-deepseek)，变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
+## Android APK
+
+`android/` 提供自包含 Android 客户端：手机本地运行同一个 Go 服务端，WebView 打开 `127.0.0.1`，不需要另外部署服务器。APK 使用前台服务保活，支持语音输入、附件上传、图片放大预览、思考过程窗口和会话置顶。
+
+预构建 APK 在 `android/dist/chat-deepseek-<版本>.apk`，校验和见同目录 `SHA256SUMS.txt`。重新构建：
+
+```powershell
+pnpm install
+node scripts/build-android.mjs
+```
+
+详细环境要求、签名和首次使用说明见 [`android/README.md`](/android/README.md)。
+
 ## 运行
 
 需要 Node.js 22.12+、pnpm、Go 1.27+。先构建前端并把产物嵌入二进制：

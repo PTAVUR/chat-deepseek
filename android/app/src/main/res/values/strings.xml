@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">chat-deepseek</string>
+    <string name="server_notification_channel">本地服务</string>
+    <string name="server_notification_channel_description">让 chat-deepseek 在后台保持运行</string>
+    <string name="server_notification_running">本地服务运行中</string>
+    <string name="server_notification_failed">本地服务启动失败，打开应用重试</string>
+    <string name="server_notification_stop">停止服务</string>
+</resources>
